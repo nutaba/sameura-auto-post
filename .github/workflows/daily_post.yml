@@ -1,0 +1,23 @@
+name: Check Dam Data
+
+on:
+  workflow_dispatch: # これを入れると、ボタン一つで今すぐテスト実行できます
+
+jobs:
+  run-python:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run script
+        run: python main.py
