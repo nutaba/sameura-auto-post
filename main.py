@@ -8,29 +8,27 @@ def get_data():
     dam_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
     rate = "取得失敗"
     try:
-        # サイトが「プログラム」を拒否しないよう、ブラウザのふりをする設定を追加
         headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(dam_url, headers=headers, timeout=10)
+        res = requests.get(dam_url, headers=headers, timeout=15)
         res.encoding = 'shift_jis'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # サイト内のすべての表のセル(td)をチェック
-        cells = soup.find_all('td')
-        valid_numbers = []
-        
-        for cell in cells:
-            val = cell.text.strip()
-            # 「92.5」のように、小数点を含み、かつ数値として認識できるものを探す
-            if val and val.replace('.', '').isdigit() and '.' in val:
-                # 貯水率は通常 0.0〜100.0 の範囲
-                f_val = float(val)
-                if 0 <= f_val <= 100:
-                    valid_numbers.append(val)
-        
-        # 表の中で、一番最後に登場する数値が「最新の貯水率」である可能性が高い
-        if valid_numbers:
-            rate = valid_numbers[-1]
-
+        # サイト内の「すべての行(tr)」を調べます
+        rows = soup.find_all('tr')
+        for row in rows:
+            text = row.get_text()
+            # 「貯水率」という文字と「％」が含まれる行を探す
+            if "％" in text and ("貯水率" in text or "貯水量" in text):
+                cols = row.find_all('td')
+                for col in cols:
+                    val = col.get_text(strip=True)
+                    # 小数点を含み、かつ数値であるものを探す（例：92.5）
+                    if val.replace('.', '').isdigit() and "." in val:
+                        rate = val
+                        # 最初に見つかった（最新の）数値で確定してループを抜ける
+                        break
+                if rate != "取得失敗":
+                    break
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
 
@@ -40,6 +38,7 @@ def get_data():
         weather_url = "https://www.jma.go.jp/bosai/forecast/data/forecast/390000.json"
         w_res = requests.get(weather_url)
         w_data = w_res.json()
+        # 天気情報を取得
         weather_info = w_data[0]['timeSeries'][0]['areas'][0]['weathers'][0]
         weather_info = weather_info.replace('\u3000', ' ') 
     except Exception as e:
