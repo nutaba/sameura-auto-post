@@ -1,10 +1,10 @@
-name: Check Dam Data
+name: Update Daily Image
 
 on:
-  workflow_dispatch: # これを入れると、ボタン一つで今すぐテスト実行できます
+  workflow_dispatch:
 
 jobs:
-  run-python:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -16,8 +16,15 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install requests beautifulsoup4 Pillow
 
       - name: Run script
         run: python main.py
+
+      - name: Commit and push if changed
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add result.jpg
+          git commit -m "Update daily image" || exit 0
+          git push
