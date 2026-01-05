@@ -4,45 +4,35 @@ from bs4 import BeautifulSoup
 def get_data():
     print("--- データの取得を開始します ---")
     
-    # 【重要】フレームの中身（数値が直接書いてあるページ）のURLを直接叩く
+    # 早明浦ダムのデータページ
     dam_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
-    
-    # 実際の中身を保持している「フレーム用URL」に変更
-    frame_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
-    # ※もしこれでもダメな場合、より直接的なURLを使います。
-    
     rate = "取得失敗"
     
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
-        # サイトにアクセス
         res = requests.get(dam_url, headers=headers, timeout=20)
         res.encoding = 'shift_jis'
+        soup = BeautifulSoup(res.text, 'html.parser')
         
-        # HTML全体から「数値.数値%」というパターンを正規表現で探す
-        import re
-        # 「貯水率」という文字の後に続く数値を重点的に探す
-        # サイトの生テキストを抽出
-        text = res.text
+        # サイト内の「すべての行(tr)」を取得
+        rows = soup.find_all('tr')
         
-        # 1. 貯水率の列にある「数値」を探す
-        # サイトの表の並び順から、数値のあとに「％」が全角または半角であるものを探す
-        matches = re.findall(r'(\d+\.\d)[％%]', text)
-        
-        if matches:
-            # サイト上の表は最新が最初の方に来ることが多いため
-            rate = matches[0]
-            print(f"成功：数値 {rate}% を抽出しました。")
-        else:
-            # ％が含まれていない場合の数値抽出
-            soup = BeautifulSoup(res.text, 'html.parser')
-            tds = soup.find_all('td')
-            # 全てのセルを後ろからチェック（最新データは最後の方にある可能性があるため）
-            for td in reversed(tds):
-                val = td.get_text(strip=True)
-                if val and val.replace('.', '').isdigit() and '.' in val:
-                    rate = val
-                    break
+        for row in rows:
+            cols = row.find_all('td')
+            # 貯水率の行は通常、列が7つ以上あります
+            if len(cols) >= 7:
+                # 7番目の列（インデックス6）が「貯水率」です
+                val = cols[6].get_text(strip=True)
+                
+                # ハイフン(-)や空欄を除外し、数値(例: 92.5)が入っているか確認
+                if val and val.replace('.', '').isdigit():
+                    # さらに「流域平均雨量（1番目の数値列）」と間違えないよう、
+                    # 時刻（2番目の列）がちゃんと入っているか確認
+                    time_val = cols[1].get_text(strip=True)
+                    if ":" in time_val:
+                        rate = val
+                        print(f"成功：{cols[0].get_text(strip=True)} {time_val} のデータを取得")
+                        break # 最新の1件を見つけたら終了
 
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
