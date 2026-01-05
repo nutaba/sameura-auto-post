@@ -12,30 +12,30 @@ def get_data():
         res.encoding = 'shift_jis'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 貯水率が含まれるテーブルの行(tr)をすべて取得
-        rows = soup.find_all('tr')
-        for row in rows:
-            # 行の中に「％」が含まれているか確認
-            if "％" in row.text:
+        # サイト内の「すべてのテーブル」を探す
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
                 cols = row.find_all('td')
-                # 貯水率の数値は、その行の「一番最後のセル」にある
-                if len(cols) > 0:
+                # 貯水率の行は、通常6つ以上の列（日付、時刻、雨量など）がある
+                if len(cols) >= 6:
+                    # 一番最後の列（貯水率）を取り出す
                     val = cols[-1].text.strip()
-                    # 数値（小数点含む）であることを確認して採用
-                    if val.replace('.', '').isdigit():
+                    # もし数値（小数点含む）であれば、それが貯水率
+                    if val.replace('.', '').replace('-', '').isdigit():
                         rate = val
-                        break # 最初に見つかった（最新の）数値で確定
+                        break # 最新の1件が見つかれば終了
+            if rate != "取得失敗": break
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
 
     # 2. 本山町の天気を取得
     weather_info = "取得失敗"
     try:
-        # 高知県の予報JSON
         weather_url = "https://www.jma.go.jp/bosai/forecast/data/forecast/390000.json"
         w_res = requests.get(weather_url)
         w_data = w_res.json()
-        # 天気文を取得
         weather_info = w_data[0]['timeSeries'][0]['areas'][0]['weathers'][0]
         weather_info = weather_info.replace('\u3000', ' ') 
     except Exception as e:
