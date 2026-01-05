@@ -1,35 +1,35 @@
 import requests
-import re
+from bs4 import BeautifulSoup
 
 def get_data():
     print("--- データの取得を開始します ---")
     
-    # 手法変更：四国地方整備局のダム放流通知サイト（テキストデータ）を利用
-    dam_url = "https://www.skr.mlit.go.jp/sameura/sameura_d.html"
+    # 手法変更：Yahoo!天気のダム情報ページ（早明浦ダム）
+    dam_url = "https://weather.yahoo.co.jp/weather/dam/8/39103.html"
     rate = "取得失敗"
     
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(dam_url, headers=headers, timeout=20)
-        res.encoding = 'shift_jis' # このサイトもShift_JISです
+        # ブラウザのふりをする設定
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        res = requests.get(dam_url, headers=headers, timeout=15)
+        soup = BeautifulSoup(res.text, 'html.parser')
         
-        # ページ全体のテキストから「貯水率：○○.○％」という部分を探す
-        # 正規表現を使って、数字と％の組み合わせを抽出します
-        match = re.search(r'貯水率[^\d]*(\d+\.\d)[％%]', res.text)
-        
-        if match:
-            rate = match.group(1)
-            print(f"成功：四国地方整備局のサイトから {rate}% を取得しました。")
-        else:
-            # 別のパターン（整数など）でも試行
-            match_alt = re.search(r'(\d+\.\d)[％%]', res.text)
-            if match_alt:
-                rate = match_alt.group(1)
-
+        # Yahoo!天気の貯水率が入っている場所を探す
+        # <dl class="dam_data"> の中の <span> を探します
+        dam_data = soup.find('dl', class_='dam_data')
+        if dam_data:
+            spans = dam_data.find_all('span')
+            for span in spans:
+                text = span.get_text()
+                # 「92.5」のような数値と「%」が含まれる部分を探す
+                if "%" in text or "％" in text:
+                    rate = text.replace('%', '').replace('％', '').strip()
+                    print(f"成功：Yahoo!天気から {rate}% を取得しました。")
+                    break
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
 
-    # 2. 本山町の天気を取得（こちらは成功しているのでそのまま）
+    # 2. 本山町の天気を取得（気象庁）
     weather_info = "取得失敗"
     try:
         weather_url = "https://www.jma.go.jp/bosai/forecast/data/forecast/390000.json"
