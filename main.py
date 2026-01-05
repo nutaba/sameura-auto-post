@@ -1,5 +1,5 @@
 import requests
-from bs4 import BeautifulSoup
+import re
 
 def get_data():
     print("--- データの取得を開始します ---")
@@ -11,24 +11,20 @@ def get_data():
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(dam_url, headers=headers, timeout=15)
         res.encoding = 'shift_jis'
-        soup = BeautifulSoup(res.text, 'html.parser')
         
-        # サイト内の「すべての行(tr)」を調べます
-        rows = soup.find_all('tr')
-        for row in rows:
-            text = row.get_text()
-            # 「貯水率」という文字と「％」が含まれる行を探す
-            if "％" in text and ("貯水率" in text or "貯水量" in text):
-                cols = row.find_all('td')
-                for col in cols:
-                    val = col.get_text(strip=True)
-                    # 小数点を含み、かつ数値であるものを探す（例：92.5）
-                    if val.replace('.', '').isdigit() and "." in val:
-                        rate = val
-                        # 最初に見つかった（最新の）数値で確定してループを抜ける
-                        break
-                if rate != "取得失敗":
-                    break
+        # HTML全体から「数字.数字」の直後に「％」または「%」がある箇所をすべて探す
+        # 例：92.5％ や 92.5%
+        matches = re.findall(r'(\d+\.\d)[％%]', res.text)
+        
+        if matches:
+            # サイトの表では最新のデータが最初の方に出ることが多いため、最初のマッチを採用
+            rate = matches[0]
+        else:
+            # 整数（例：100%）の場合も考慮
+            matches_int = re.findall(r'(\d+)[％%]', res.text)
+            if matches_int:
+                rate = matches_int[0]
+
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
 
@@ -38,7 +34,6 @@ def get_data():
         weather_url = "https://www.jma.go.jp/bosai/forecast/data/forecast/390000.json"
         w_res = requests.get(weather_url)
         w_data = w_res.json()
-        # 天気情報を取得
         weather_info = w_data[0]['timeSeries'][0]['areas'][0]['weathers'][0]
         weather_info = weather_info.replace('\u3000', ' ') 
     except Exception as e:
