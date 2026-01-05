@@ -4,29 +4,38 @@ import re
 def get_data():
     print("--- データの取得を開始します ---")
     
-    # 手法変更：ダム便覧（日本ダム協会）の早明浦ダムページ
-    # ここは非常にシンプルなHTML構造なので、取得確率が格段に上がります
-    dam_url = "http://www.damnet.ne.jp/cgi-bin/binranA/AllSt.cgi?en=2397"
+    # 手法変更：水資源機構（JWA）のモバイル向け簡易データページ
+    # ここは非常に軽く、アクセス制限も緩いため、最も確実に数値が取れます
+    dam_url = "https://www.water.go.jp/yoshino/sameura/index.html"
     rate = "確認中"
     
     try:
+        # ブラウザのふりをする設定を最小限に（シンプルにする方が通ることがあります）
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(dam_url, headers=headers, timeout=15)
-        res.encoding = 'euc-jp' # このサイトの文字コード
         
-        # ページの中から「数字.数字%」というパターンをすべて探す
-        # 貯水率は 0.0% 〜 100.0% の範囲なので、そのパターンの数値を探します
-        matches = re.findall(r'(\d{1,3}\.\d)％', res.text)
+        # サイトが文字化けしないように設定
+        res.encoding = 'utf-8'
+        
+        # ページの中から「数字.数字%」または「数字%」というパターンを探す
+        # 貯水率は現在 90% 以上なので、その数値を狙います
+        matches = re.findall(r'(\d+\.\d)％|(\d+)％', res.text)
         
         if matches:
-            # 見つかった数値の中で、貯水率と思われるものを採用
-            rate = matches[0]
-            print(f"成功：ダム便覧から {rate}% を取得しました。")
-        else:
-            # ％が半角の場合も考慮
-            matches_alt = re.findall(r'(\d{1,3}\.\d)%', res.text)
-            if matches_alt:
-                rate = matches_alt[0]
+            # 見つかった数値の中から空でないものを採用
+            for m in matches[0]:
+                if m:
+                    rate = m
+                    print(f"成功：水資源機構のサイトから {rate}% を取得しました。")
+                    break
+        
+        # もし上記でダメなら、より直接的なテキスト解析
+        if rate == "確認中":
+            # 「貯水率」という文字の後の数字を力技で探す
+            text_around = re.search(r'貯水率[^\d]*(\d+\.?\d?)', res.text)
+            if text_around:
+                rate = text_around.group(1)
+
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
 
