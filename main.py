@@ -8,25 +8,29 @@ def get_data():
     dam_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
     rate = "取得失敗"
     try:
-        res = requests.get(dam_url, timeout=10)
+        # サイトが「プログラム」を拒否しないよう、ブラウザのふりをする設定を追加
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get(dam_url, headers=headers, timeout=10)
         res.encoding = 'shift_jis'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # サイト内の「すべてのテーブル」を探す
-        tables = soup.find_all('table')
-        for table in tables:
-            rows = table.find_all('tr')
-            for row in rows:
-                cols = row.find_all('td')
-                # 貯水率の行は、通常6つ以上の列（日付、時刻、雨量など）がある
-                if len(cols) >= 6:
-                    # 一番最後の列（貯水率）を取り出す
-                    val = cols[-1].text.strip()
-                    # もし数値（小数点含む）であれば、それが貯水率
-                    if val.replace('.', '').replace('-', '').isdigit():
-                        rate = val
-                        break # 最新の1件が見つかれば終了
-            if rate != "取得失敗": break
+        # サイト内のすべての表のセル(td)をチェック
+        cells = soup.find_all('td')
+        valid_numbers = []
+        
+        for cell in cells:
+            val = cell.text.strip()
+            # 「92.5」のように、小数点を含み、かつ数値として認識できるものを探す
+            if val and val.replace('.', '').isdigit() and '.' in val:
+                # 貯水率は通常 0.0〜100.0 の範囲
+                f_val = float(val)
+                if 0 <= f_val <= 100:
+                    valid_numbers.append(val)
+        
+        # 表の中で、一番最後に登場する数値が「最新の貯水率」である可能性が高い
+        if valid_numbers:
+            rate = valid_numbers[-1]
+
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
 
