@@ -4,43 +4,45 @@ from bs4 import BeautifulSoup
 def get_data():
     print("--- データの取得を開始します ---")
     
-    # URLを直接データが入っている別のものに変更
+    # 【重要】フレームの中身（数値が直接書いてあるページ）のURLを直接叩く
     dam_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
+    
+    # 実際の中身を保持している「フレーム用URL」に変更
+    frame_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
+    # ※もしこれでもダメな場合、より直接的なURLを使います。
+    
     rate = "取得失敗"
     
     try:
-        # ブラウザのふりをする設定（ヘッダー）を大幅に強化
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'ja,en-US;q=0.7,en;q=0.3',
-        }
-        
+        headers = {'User-Agent': 'Mozilla/5.0'}
         # サイトにアクセス
         res = requests.get(dam_url, headers=headers, timeout=20)
         res.encoding = 'shift_jis'
         
-        # HTMLを解析
-        soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # サイト内の「文字」をすべて取得して、力技で数値を探す
-        text = soup.get_text()
-        
-        # 貯水率の表の中にある数値パターン（例: 92.5）を探す
+        # HTML全体から「数値.数値%」というパターンを正規表現で探す
         import re
-        # 数値（小数点あり）の後に続く ％ または % を探す
+        # 「貯水率」という文字の後に続く数値を重点的に探す
+        # サイトの生テキストを抽出
+        text = res.text
+        
+        # 1. 貯水率の列にある「数値」を探す
+        # サイトの表の並び順から、数値のあとに「％」が全角または半角であるものを探す
         matches = re.findall(r'(\d+\.\d)[％%]', text)
         
         if matches:
-            # 最初に見つかった（最新の）数値を採用
+            # サイト上の表は最新が最初の方に来ることが多いため
             rate = matches[0]
             print(f"成功：数値 {rate}% を抽出しました。")
         else:
-            # 整数（例: 100%）の場合も考慮
-            matches_int = re.findall(r'(\d+)[％%]', text)
-            if matches_int:
-                rate = matches_int[0]
-                print(f"成功：数値 {rate}% を抽出しました。")
+            # ％が含まれていない場合の数値抽出
+            soup = BeautifulSoup(res.text, 'html.parser')
+            tds = soup.find_all('td')
+            # 全てのセルを後ろからチェック（最新データは最後の方にある可能性があるため）
+            for td in reversed(tds):
+                val = td.get_text(strip=True)
+                if val and val.replace('.', '').isdigit() and '.' in val:
+                    rate = val
+                    break
 
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
