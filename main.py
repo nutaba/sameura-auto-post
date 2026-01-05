@@ -13,19 +13,22 @@ def get_data():
         res.encoding = 'shift_jis'
         soup = BeautifulSoup(res.text, 'html.parser')
         
+        # 表のすべての行をチェック
         rows = soup.find_all('tr')
+        print(f"解析中: {len(rows)}行のデータをスキャンしています...")
+        
         for row in rows:
             cols = row.find_all('td')
             if len(cols) >= 7:
-                # 貯水率の列を取得
-                val = cols[6].get_text(strip=True)
-                # 重要：ハイフン(-)や空欄を除外し、数字が入っている行だけを狙う
-                if val and val.replace('.', '').isdigit():
+                # 貯水率の列(一番右)を取得
+                val = cols[-1].get_text(strip=True)
+                # ハイフンや空欄を除外し、純粋に数字(0-9)が含まれているか確認
+                if val and any(char.isdigit() for char in val):
                     rate = val
                     date_val = cols[0].get_text(strip=True)
                     time_val = cols[1].get_text(strip=True)
-                    print(f"確認：{date_val} {time_val} のデータを取得しました")
-                    break # 数値が見つかったら、そこで終了
+                    print(f"成功：{date_val} {time_val}時点のデータを採用しました。")
+                    break # 最新の数値が見つかったら終了
                     
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
@@ -41,6 +44,7 @@ def get_data():
     except Exception as e:
         print(f"天気データ取得エラー: {e}")
 
+    print(f"-------------------")
     print(f"早明浦ダム貯水率: {rate}%")
     print(f"本山町の天気: {weather_info}")
     print(f"-------------------")
