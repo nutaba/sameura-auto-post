@@ -4,8 +4,8 @@ from bs4 import BeautifulSoup
 def get_data():
     print("--- データの取得を開始します ---")
     
-    # 1. 早明浦ダムの貯水率を取得
-    dam_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
+    # 1. 早明浦ダムの貯水率を取得（データが直接入っているURLへ変更）
+    dam_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=1"
     rate = "取得失敗"
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -13,22 +13,20 @@ def get_data():
         res.encoding = 'shift_jis'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 表のすべての行をチェック
+        # 表の行をすべて取得
         rows = soup.find_all('tr')
         print(f"解析中: {len(rows)}行のデータをスキャンしています...")
         
-        for row in rows:
+        # 下から順に（最新時刻から）数字が入っている行を探す
+        for row in reversed(rows):
             cols = row.find_all('td')
             if len(cols) >= 7:
-                # 貯水率の列(一番右)を取得
                 val = cols[-1].get_text(strip=True)
-                # ハイフンや空欄を除外し、純粋に数字(0-9)が含まれているか確認
+                # 数字が含まれているか確認
                 if val and any(char.isdigit() for char in val):
                     rate = val
-                    date_val = cols[0].get_text(strip=True)
-                    time_val = cols[1].get_text(strip=True)
-                    print(f"成功：{date_val} {time_val}時点のデータを採用しました。")
-                    break # 最新の数値が見つかったら終了
+                    print(f"成功：最新データを取得しました。")
+                    break
                     
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
