@@ -1,6 +1,10 @@
-name: Update Daily Image
+name: Update Instagram Story
 
 on:
+  schedule:
+    # 日本時間の毎日午前9:00（世界標準時 0:00）に実行
+    - cron: '0 0 * * *'
+  # ボタン操作による手動実行も可能にする
   workflow_dispatch:
 
 permissions:
@@ -20,29 +24,21 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          playwright install --with-deps chromium
+          pip install requests beautifulsoup4 Pillow google-generativeai playwright instagrapi
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: Run script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
+          INSTAGRAM_PASSWORD: ${{ secrets.INSTAGRAM_PASSWORD }}
         run: python main.py
-
-      - name: Upload debug artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dam-debug
-          path: |
-            temp_shot_full.png
-            temp_shot.png
-            ai_raw.txt
-            result.jpg
 
       - name: Commit and push if changed
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add result.jpg
-          git commit -m "Update daily image with AI" || exit 0
+          git commit -m "Update daily image and post to Instagram" || exit 0
           git push
