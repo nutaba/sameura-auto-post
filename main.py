@@ -7,33 +7,32 @@ from datetime import datetime, timedelta, timezone
 def get_data():
     print("--- データの取得を開始します ---")
     
-    # 国土交通省のリアルタイムダム諸量一覧表ページ
-    dam_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
+    # 水資源機構の利水容量データページ
+    dam_url = "https://www.water.go.jp/mizu/ikeda/mizuinfo/dyn/html/p0101/60/p010102.html"
     rate = "--"
     
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(dam_url, headers=headers, timeout=20)
-        res.encoding = 'shift_jis'
+        res.encoding = 'utf-8' # このサイトはUTF-8です
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 表のすべての行(tr)を確認
+        # サイト内のテーブルから「利水容量」という文字が入った行を探す
         rows = soup.find_all('tr')
-        
         for row in rows:
-            cols = row.find_all('td')
-            # 貯水率が含まれる7列目以降があるか確認
-            if len(cols) >= 7:
-                val = cols[6].get_text(strip=True)
-                # ハイフン(-)ではなく、数字(91.1など)が入っている最新の行を採用
-                if val and val != "-" and val.replace('.', '', 1).isdigit():
-                    rate = val
-                    print(f"成功：{cols[0].get_text(strip=True)} {cols[1].get_text(strip=True)} のデータ({rate}%)を採用しました。")
-                    break
+            if "利水容量" in row.get_text():
+                cols = row.find_all('td')
+                for col in cols:
+                    text = col.get_text(strip=True)
+                    # 「91.1」のような数字と「%」が含まれる部分を探す
+                    if "%" in text or "％" in text:
+                        rate = text.replace('%', '').replace('％', '').strip()
+                        print(f"成功：利水容量 {rate}% を取得しました。")
+                        break
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
 
-    # 日本時間(JST)で日付を取得
+    # 日本時間で日付を取得
     jst = timezone(timedelta(hours=+9), 'JST')
     date_str = datetime.now(jst).strftime('%Y年%m月%d日')
 
@@ -52,22 +51,19 @@ def create_image(rate, weather, date_str):
     font_file = "font.ttf"
     
     if not os.path.exists(bg_file) or not os.path.exists(font_file):
-        print("エラー: background.jpg または font.ttf がありません。")
+        print("エラー: ファイルが足りません。")
         return
 
     try:
         img = Image.open(bg_file)
         draw = ImageDraw.Draw(img)
-        
-        # フォントサイズ（適宜調整してください）
         font_main = ImageFont.truetype(font_file, 150)
         font_sub = ImageFont.truetype(font_file, 80)
         font_date = ImageFont.truetype(font_file, 70) 
         
-        # 縁取り設定
         line_settings = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
 
-        # 文字の配置
+        # 配置
         draw.text((100, 80), date_str, font=font_date, **line_settings)
         draw.text((100, 350), "早明浦ダム貯水率", font=font_sub, **line_settings)
         draw.text((120, 480), f"{rate}%", font=font_main, **line_settings)
@@ -75,7 +71,7 @@ def create_image(rate, weather, date_str):
         draw.text((120, 870), f"{weather}", font=font_sub, **line_settings)
         
         img.save("result.jpg")
-        print("成功：result.jpg を作成・更新しました。")
+        print("成功：画像を保存しました")
     except Exception as e:
         print(f"画像作成エラー: {e}")
 
