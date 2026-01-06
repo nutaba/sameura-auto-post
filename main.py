@@ -1,5 +1,4 @@
 import os
-import time
 import json
 import re
 import requests
@@ -8,7 +7,26 @@ from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 import google.generativeai as genai
 
-URL = "https://suibo-kouho.suibou.pref.kochi.lg.jp/suibou/graph/model_dam_8.html?unq=12473017225"
+DAM_URL = "https://suibo-kouho.suibou.pref.kochi.lg.jp/suibou/graph/model_dam_8.html?unq=12473017225"
+
+# 本山町（高知県）だいたいの中心座標（固定して安定化）
+# 公式サイト/百科系の記載（33度45分,133度35分）を小数にしたもの :contentReference[oaicite:1]{index=1}
+MOTOYAMA_LAT = 33.75
+MOTOYAMA_LON = 133.5833
+
+WMO_MAP = {
+    0: "快晴", 1: "晴れ", 2: "薄曇り", 3: "くもり",
+    45: "霧", 48: "霧",
+    51: "霧雨", 53: "霧雨", 55: "霧雨",
+    56: "凍る霧雨", 57: "凍る霧雨",
+    61: "小雨", 63: "雨", 65: "大雨",
+    66: "凍る雨", 67: "凍る雨",
+    71: "小雪", 73: "雪", 75: "大雪",
+    77: "霰",
+    80: "にわか雨", 81: "にわか雨", 82: "激しいにわか雨",
+    85: "にわか雪", 86: "激しいにわか雪",
+    95: "雷雨", 96: "雷雨(雹)", 99: "雷雨(雹)",
+}
 
 
 # ------------------------------
@@ -39,10 +57,8 @@ def salvage_json(text: str):
     m = re.search(r"\{.*", t, flags=re.DOTALL)
     if m:
         t = m.group(0)
-
     if t.endswith("}"):
         return t
-
     t = t.rstrip()
     if t.endswith(","):
         t = t[:-1].rstrip()
@@ -50,77 +66,54 @@ def salvage_json(text: str):
 
 
 # ------------------------------
-# Weather (Motoyama, Kochi) via Open-Meteo
+# Weather (Motoyama) via Open-Meteo (no key)
 # ------------------------------
-WMO_MAP = {
-    0: "快晴", 1: "晴れ", 2: "薄曇り", 3: "くもり",
-    45: "霧", 48: "霧",
-    51: "霧雨", 53: "霧雨", 55: "霧雨",
-    56: "凍る霧雨", 57: "凍る霧雨",
-    61: "小雨", 63: "雨", 65: "大雨",
-    66: "凍る雨", 67: "凍る雨",
-    71: "小雪", 73: "雪", 75: "大雪",
-    77: "霰",
-    80: "にわか雨", 81: "にわか雨", 82: "激しいにわか雨",
-    85: "にわか雪", 86: "激しいにわか雪",
-    95: "雷雨", 96: "雷雨(雹)", 99: "雷雨(雹)",
-}
-
-def get_motoyama_latlon():
-    # Open-Meteo geocoding (no key)
-    q = "本山町 高知県"
-    url = "https://geocoding-api.open-meteo.com/v1/search"
-    r = requests.get(url, params={"name": q, "count": 1, "language": "ja", "format": "json"}, timeout=15)
-    r.raise_for_status()
-    data = r.json()
-    results = data.get("results") or []
-    if not results:
-        raise RuntimeError("geocoding結果なし")
-    return float(results[0]["latitude"]), float(results[0]["longitude"])
-
 def get_weather_motoyama():
     """
-    画像に載せる用の短い天気文字列を返す
     例: "本山町 天気: くもり 8.3℃ / 降水30%"
     """
-    try:
-        lat, lon = get_motoyama_latlon()
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": MOTOYAMA_LAT,
+        "longitude": MOTOYAMA_LON,
+        "current": "temperature_2m,weather_code",
+        "daily": "precipitation_probability_max",
+        "timezone": "Asia/Tokyo",
+    }
+    headers = {"User-Agent": "sameura-auto-post/1.0"}
 
-        url = "https://api.open-meteo.com/v1/forecast"
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "current": "temperature_2m,weather_code",
-            "daily": "precipitation_probability_max",
-            "timezone": "Asia/Tokyo",
-        }
-        r = requests.get(url, params=params, timeout=15)
-        r.raise_for_status()
-        data = r.json()
+    # 一時的な失敗に強くする（最大3回リトライ）
+    last_err = None
+    for _ in range(3):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=20)
+            r.raise_for_status()
+            data = r.json()
 
-        current = data.get("current") or {}
-        daily = data.get("daily") or {}
+            current = data.get("current") or {}
+            daily = data.get("daily") or {}
 
-        temp = current.get("temperature_2m")
-        wcode = current.get("weather_code")
-        pop_list = daily.get("precipitation_probability_max") or []
-        pop = pop_list[0] if pop_list else None
+            temp = current.get("temperature_2m")
+            wcode = current.get("weather_code")
+            pop_list = daily.get("precipitation_probability_max") or []
+            pop = pop_list[0] if pop_list else None
 
-        cond = WMO_MAP.get(int(wcode), "天気不明") if wcode is not None else "天気不明"
-        temp_str = f"{temp:.1f}℃" if isinstance(temp, (int, float)) else "--℃"
-        pop_str = f"{int(pop)}%" if isinstance(pop, (int, float)) else "--%"
+            cond = WMO_MAP.get(int(wcode), "天気不明") if wcode is not None else "天気不明"
+            temp_str = f"{temp:.1f}℃" if isinstance(temp, (int, float)) else "--℃"
+            pop_str = f"{int(pop)}%" if isinstance(pop, (int, float)) else "--%"
 
-        return f"本山町 天気: {cond} {temp_str} / 降水{pop_str}"
+            return f"本山町 天気: {cond} {temp_str} / 降水{pop_str}"
 
-    except Exception as e:
-        # 失敗しても画像生成は続ける
-        return f"本山町 天気: --（取得失敗）"
+        except Exception as e:
+            last_err = e
+
+    return f"本山町 天気: --（取得失敗）"
 
 
 # ------------------------------
-# Dam rate via screenshot + Gemini
+# Sameura Dam rate via screenshot + Gemini
 # ------------------------------
-def get_rate_with_ai():
+def get_sameura_rate_with_ai():
     print("--- 1. 早明浦ダムページを撮影中 ---")
 
     rate = "--"
@@ -129,11 +122,9 @@ def get_rate_with_ai():
         print("GEMINI_API_KEY が未設定")
         return rate
 
-    # ai_raw.txt は必ず作る
     with open("ai_raw.txt", "w", encoding="utf-8") as f:
         f.write("ai_raw placeholder\n")
 
-    # Screenshot
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
@@ -143,7 +134,7 @@ def get_rate_with_ai():
                 locale="ja-JP",
             )
             page = context.new_page()
-            page.goto(URL, wait_until="domcontentloaded")
+            page.goto(DAM_URL, wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
 
             page.screenshot(path="temp_shot_full.png", full_page=True)
@@ -156,7 +147,7 @@ def get_rate_with_ai():
         print("スクショでエラー:", e)
         return rate
 
-    print("--- 2. Geminiで貯水率を抽出中 ---")
+    print("--- 2. Geminiで早明浦ダムの貯水率を抽出中 ---")
 
     try:
         genai.configure(api_key=api_key)
@@ -181,11 +172,9 @@ def get_rate_with_ai():
         text = extract_text_from_response(response)
 
         if text.strip() in ("```json", "```", ""):
-            retry_prompt = prompt + "\n今すぐJSON本文を1行で出力。"
-            response = model.generate_content([retry_prompt, img_file])
+            response = model.generate_content([prompt + "\n今すぐJSON本文を1行で。", img_file])
             text = extract_text_from_response(response)
 
-        print("AIの生回答:", repr(text))
         with open("ai_raw.txt", "w", encoding="utf-8") as f:
             f.write(text)
 
@@ -241,11 +230,11 @@ def create_image(rate: str, weather_line: str):
     # 日時
     draw.text((100, 80), date_str, font=f_date, **line)
 
-    # 天気（上部に追加）
+    # 天気
     draw.text((100, 165), weather_line, font=f_weather, **line)
 
-    # 貯水率のみ
-    draw.text((100, 320), "貯水率", font=f_sub, **line)
+    # 早明浦ダム 貯水率（明示）
+    draw.text((100, 320), "早明浦ダム 貯水率", font=f_sub, **line)
     draw.text((120, 400), f"{rate}%", font=f_main, **line)
 
     img.save("result.jpg")
@@ -254,5 +243,5 @@ def create_image(rate: str, weather_line: str):
 
 if __name__ == "__main__":
     weather = get_weather_motoyama()
-    r = get_rate_with_ai()
-    create_image(r, weather)
+    rate = get_sameura_rate_with_ai()
+    create_image(rate, weather)
