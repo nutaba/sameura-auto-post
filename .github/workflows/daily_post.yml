@@ -1,10 +1,9 @@
-name: Update Instagram Story
+name: Daily Dam Image
 
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 0 * * *"  # 毎日 09:00 JST
-
 
 permissions:
   contents: write
@@ -13,31 +12,37 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # 3.9から3.11へ変更
+          python-version: "3.9"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
-          pip install requests beautifulsoup4 Pillow google-generativeai playwright instagrapi
-          playwright install chromium
-          playwright install-deps chromium
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
 
-      - name: Run script
+      - name: Run main
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
-          INSTAGRAM_PASSWORD: ${{ secrets.INSTAGRAM_PASSWORD }}
         run: python main.py
 
-      - name: Commit and push if changed
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add result.jpg
-          git commit -m "Update daily image and post to Instagram" || exit 0
-          git push
+      - name: Upload result.jpg to Google Drive
+        env:
+          GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: python upload_to_drive.py
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dam-debug
+          path: |
+            ai_raw.txt
+            temp_shot.png
+            temp_shot2.png
+            result.jpg
