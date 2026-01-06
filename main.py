@@ -11,14 +11,32 @@ URL = "https://suibo-kouho.suibou.pref.kochi.lg.jp/suibou/graph/model_dam_8.html
 
 def pick_model_name():
     """
-    generateContent が使える Gemini モデルを自動で1つ選ぶ
-    （モデル名変更で壊れないようにするため）
+    generateContent が使える Gemini モデルを自動選択
+    （モデル名変更で壊れないようにする）
     """
     for m in genai.list_models():
         methods = getattr(m, "supported_generation_methods", []) or []
         if "generateContent" in methods:
             return m.name  # 例: models/gemini-2.5-flash
     raise RuntimeError("generateContent 対応の Gemini モデルが見つかりません")
+
+
+def extract_text_from_response(response):
+    """
+    response.text が不安定なケース対策：
+    candidates[0].content.parts[].text を優先して全文を組み立てる
+    """
+    try:
+        cand = response.candidates[0]
+        parts = getattr(cand.content, "parts", []) or []
+        text = "".join([getattr(p, "text", "") for p in parts]).strip()
+        if text:
+            return text
+    except Exception:
+        pass
+
+    # 最後の手段
+    return (getattr(response, "text", "") or "").strip()
 
 
 def get_data_with_ai():
@@ -74,31 +92,37 @@ def get_data_with_ai():
             model_name,
             generation_config={
                 "temperature": 0,
-                "max_output_tokens": 128,
+                "max_output_tokens": 256,
             },
         )
 
         img_file = genai.upload_file(path="temp_shot.png")
 
         prompt = """
-あなたは厳密な情報抽出エンジンです。
-出力は JSON のみ。余計な文章は禁止。
+出力は **生のJSONのみ**。
+```json のようなコードブロック（コードフェンス）は絶対に付けない。
 
-画像から次の2つを読み取ってください。
-
+画像から次の2つを読み取る：
 - rate: 貯水率(利水容量) の数値（%記号なし。例: 91.20）
 - volume: 貯水量 の数値（カンマなし。例: 106270 または 106270.000）
 
-必ず次の形式だけを返してください。
+返すのはこの1行だけ：
 {"rate": <number or null>, "volume": <number or null>}
 
 読めない場合は null。
 """.strip()
 
         response = model.generate_content([prompt, img_file])
-        text = (response.text or "").strip()
 
-        print("AIの生回答:", text)
+        text = extract_text_from_response(response)
+
+        # ```json だけ出る事故への最終保険（1回だけ再試行）
+        if text.strip() in ("```json", "```", ""):
+            retry_prompt = prompt + "\n今すぐJSON本文を出力して。コードフェンス禁止。"
+            response = model.generate_content([retry_prompt, img_file])
+            text = extract_text_from_response(response)
+
+        print("AIの生回答:", repr(text))
 
         # ★ 生回答を必ず保存
         with open("ai_raw.txt", "w", encoding="utf-8") as f:
