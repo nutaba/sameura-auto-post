@@ -1,9 +1,10 @@
 name: Update Instagram Story
 
 on:
-  schedule:
-    - cron: '0 0 * * *'
   workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"  # 毎日 09:00 JST
+
 
 permissions:
   contents: write
