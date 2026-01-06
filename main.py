@@ -6,34 +6,39 @@ from datetime import datetime, timedelta, timezone
 
 def get_data():
     print("--- データの取得を開始します ---")
+    # ご提示いただいた国土交通省の「リアルタイムダム諸量一覧表」
     dam_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
     rate = "--"
 
     try:
-        # サイトにアクセス
-        res = requests.get(dam_url, timeout=20)
+        # サイトのデータを取得
+        res = requests.get(dam_url, timeout=30)
         res.encoding = 'shift_jis'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # すべての行(tr)を取得
+        # 表のすべての行(tr)を取得
         rows = soup.find_all('tr')
+        print(f"解析中: {len(rows)} 行のデータが見つかりました")
         
-        # 数字が入っている行を探す（最新の00分データを優先）
         for row in rows:
             cols = row.find_all('td')
+            # 貯水率の列（7番目）があるか確認
             if len(cols) >= 7:
-                time_val = cols[1].get_text(strip=True) # 時刻 (例: 09:00)
-                rate_val = cols[6].get_text(strip=True) # 貯水率
+                # 7番目の列（indexは6）から貯水率を取得
+                val = cols[6].get_text(strip=True)
                 
-                # ハイフンではなく、数字(小数点含む)が入っているか確認
-                if rate_val and rate_val != "-" and rate_val.replace('.', '', 1).isdigit():
-                    rate = rate_val
-                    print(f"成功：{time_val} の貯水率 {rate}% を採用しました。")
-                    break # 最初に見つけた数字入りの行（最新）で確定
+                # デバッグ用に出力（Actionsのログで見れます）
+                print(f"チェック中: {cols[1].get_text(strip=True)} -> {val}")
+                
+                # ハイフン(-)や空欄を除外し、数字(小数点含む)が入っている行を見つけるまで繰り返す
+                if val and val != "-" and val.replace('.', '', 1).isdigit():
+                    rate = val
+                    print(f"★★★ 成功：{cols[1].get_text(strip=True)}の数値 {rate}% を採用しました ★★★")
+                    break # 数字が見つかったらループを抜ける
     except Exception as e:
-        print(f"データ取得エラー: {e}")
+        print(f"ダムデータ取得エラー: {e}")
 
-    # 日本時間で日付を取得
+    # 日本時間 (JST) で日付を取得
     jst = timezone(timedelta(hours=+9), 'JST')
     date_str = datetime.now(jst).strftime('%Y年%m月%d日')
 
@@ -52,29 +57,32 @@ def create_image(rate, weather, date_str):
     font_file = "font.ttf"
     
     if not os.path.exists(bg_file) or not os.path.exists(font_file):
+        print("エラー: background.jpg または font.ttf が見つかりません。")
         return
 
     try:
         img = Image.open(bg_file)
         draw = ImageDraw.Draw(img)
+        
         font_main = ImageFont.truetype(font_file, 150)
         font_sub = ImageFont.truetype(font_file, 80)
         font_date = ImageFont.truetype(font_file, 70) 
         
+        # 縁取り設定（黒）
         line_settings = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
 
         # 配置
         draw.text((100, 80), date_str, font=font_date, **line_settings)
         draw.text((100, 350), "早明浦ダム貯水率", font=font_sub, **line_settings)
-        # ここで取得した rate を表示
+        # ここに取得した rate を入れる
         draw.text((120, 480), f"{rate}%", font=font_main, **line_settings)
         draw.text((100, 750), "本山町の天気", font=font_sub, **line_settings)
         draw.text((120, 870), f"{weather}", font=font_sub, **line_settings)
         
         img.save("result.jpg")
-        print(f"成功：貯水率 {rate}% で画像を作成しました")
+        print(f"完了：貯水率 {rate}% で画像を保存しました")
     except Exception as e:
-        print(f"画像作成エラー: {e}")
+        print(f"画像作成中にエラー発生: {e}")
 
 if __name__ == "__main__":
     r, w, d = get_data()
