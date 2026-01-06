@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install requests beautifulsoup4 Pillow google-generativeai playwright
-          # ブラウザ本体と、実行に必要な部品をインストールします
+          # ここでブラウザ本体と必要な部品をインストールします
           playwright install chromium
           playwright install-deps chromium
 
