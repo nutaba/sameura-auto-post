@@ -9,83 +9,73 @@ def get_data_with_ai():
     print("--- 1. ブラウザでスクリーンショットを撮影中 ---")
     url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
     
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        # 画面サイズを大きめに設定して表を確実に入れる
-        page.set_viewport_size({"width": 1280, "height": 1000})
-        page.goto(url)
-        time.sleep(5) # ページが完全に表示されるまで待つ
-        
-        # スクリーンショットを保存
-        page.screenshot(path="temp_shot.png", full_page=True)
-        browser.close()
+    rate, volume = "取得失敗", "取得失敗"
 
-    print("--- 2. AI(Gemini)が数値を解析中 ---")
-    # GitHubのSecretsに保存したキーを読み込む
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("エラー: GEMINI_API_KEY が設定されていません。")
-        return "取得失敗", "取得失敗"
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
-    # 撮影した画像をAIにアップロード
-    sample_file = genai.upload_file(path="temp_shot.png", display_name="Dam Table")
-    
-    # AIへの指示（プロンプト）
-    prompt = (
-        "この早明浦ダムのデータ表から、最新の数値を読み取ってください。"
-        "『貯水率(%)』と『貯水量(×10^3m3)』を抜き出し、"
-        "回答は必ず『率:91.1, 量:107400』のように、項目名と数値の形式だけで答えてください。"
-        "表の一番上にある、数字が入っている行を優先してください。"
-    )
-    
     try:
-        response = model.generate_content([prompt, sample_file])
-        text = response.text
-        print(f"AIの回答結果: {text}")
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.set_viewport_size({"width": 1280, "height": 1200})
+            page.goto(url, wait_until="networkidle")
+            time.sleep(5)
+            page.screenshot(path="temp_shot.png")
+            browser.close()
 
-        # AIの回答から数値を切り出す処理
-        # 例: "率:91.1, 量:107400" -> rate="91.1", volume="107400"
-        rate = text.split("率:")[1].split(",")[0].strip()
-        volume = text.split("量:")[1].strip()
-        # もし単位などが混じっていたら数字以外を削る
-        rate = rate.replace("%", "").replace("％", "")
-        volume = volume.replace("千m3", "").replace("万m3", "").replace(",", "")
+        print("--- 2. AI(Gemini)が数値を解析中 ---")
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            print("エラー: APIキーが設定されていません")
+            return "Key未設定", "Key未設定"
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # 画像アップロード
+        img_file = genai.upload_file(path="temp_shot.png")
+        prompt = "この早明浦ダムの表から、最新の貯水率(%)と貯水量(×10^3m3)を読み取ってください。回答は必ず『率:91.1, 量:107400』のように数値だけ答えてください。"
+        
+        response = model.generate_content([prompt, img_file])
+        text = response.text
+        print(f"AI回答: {text}")
+
+        # 文字列から数値を抽出
+        if "率:" in text and "量:" in text:
+            rate = text.split("率:")[1].split(",")[0].strip()
+            volume = text.split("量:")[1].strip()
+        else:
+            print("AIの回答形式が想定外です")
+            
     except Exception as e:
-        print(f"AI解析エラー: {e}")
-        rate, volume = "取得失敗", "取得失敗"
+        print(f"エラー発生: {e}")
     
     return rate, volume
 
 def create_image(rate, volume):
     print("--- 3. 画像の作成を開始します ---")
-    # 日本時間の日付
     jst = timezone(timedelta(hours=+9), 'JST')
     date_str = datetime.now(jst).strftime('%Y年%m月%d日 %H:%M')
     
-    bg_file = "background.jpg"
-    font_file = "font.ttf"
-    
+    bg_file, font_file = "background.jpg", "font.ttf"
     if not os.path.exists(bg_file) or not os.path.exists(font_file):
-        print("エラー: 背景画像またはフォントファイルが見つかりません。")
+        print("背景画像またはフォントが見つかりません")
         return
 
-    try:
-        img = Image.open(bg_file)
-        draw = ImageDraw.Draw(img)
-        
-        # フォントサイズ設定
-        f_main = ImageFont.truetype(font_file, 130) # 数値用
-        f_sub = ImageFont.truetype(font_file, 70)   # 項目名用
-        f_date = ImageFont.truetype(font_file, 60)  # 日付用
-        
-        # 白文字に黒縁取りの設定
-        line = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
+    img = Image.open(bg_file)
+    draw = ImageDraw.Draw(img)
+    f_main = ImageFont.truetype(font_file, 130)
+    f_sub = ImageFont.truetype(font_file, 70)
+    f_date = ImageFont.truetype(font_file, 60)
+    
+    line = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
+    draw.text((100, 80), date_str, font=f_date, **line)
+    draw.text((100, 300), "貯水率", font=f_sub, **line)
+    draw.text((120, 380), f"{rate}%", font=f_main, **line)
+    draw.text((100, 550), "貯水量", font=f_sub, **line)
+    draw.text((120, 630), f"{volume}千m³", font=f_main, **line)
+    
+    img.save("result.jpg")
+    print("画像保存完了")
 
-        # 文字の配置
-        draw.text((100, 80), date_str, font=f_date, **line)
-        
-        draw.text
+if __name__ == "__main__":
+    r, v = get_data_with_ai()
+    create_image(r, v)
