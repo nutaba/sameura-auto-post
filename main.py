@@ -15,41 +15,49 @@ def get_data_with_ai():
         with sync_playwright() as p:
             browser = p.chromium.launch()
             page = browser.new_page()
-            page.set_viewport_size({"width": 1280, "height": 1200})
+            # ページ全体がしっかり入るようにサイズを調整
+            page.set_viewport_size({"width": 1280, "height": 1500})
             page.goto(url, wait_until="networkidle")
             time.sleep(5)
+            # 表の部分が読み込み完了するのを待ってから撮影
             page.screenshot(path="temp_shot.png")
             browser.close()
 
         print("--- 2. AI(Gemini)が数値を解析中 ---")
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            print("エラー: APIキーが設定されていません")
             return "Key未設定", "Key未設定"
 
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        # 画像アップロード
         img_file = genai.upload_file(path="temp_shot.png")
-        prompt = "この早明浦ダムの表から、最新の貯水率(%)と貯水量(×10^3m3)を読み取ってください。回答は必ず『率:91.1, 量:107400』のように数値だけ答えてください。"
+        
+        # AIへの指示をより具体的に修正
+        prompt = (
+            "この画像はダムの貯水量データ表です。一番上の行から順に見て、"
+            "空欄（-）ではない数字が入っている最新の行を探してください。"
+            "その行の『貯水量(×10^3m3)』と『貯水率(%)』の数値を抜き出してください。"
+            "回答は必ず『率:91.1, 量:107400』のように、この形式だけで答えてください。"
+            "余計な文章は一切書かないでください。"
+        )
         
         response = model.generate_content([prompt, img_file])
-        text = response.text
+        text = response.text.strip()
         print(f"AI回答: {text}")
 
-        # 文字列から数値を抽出
+        # 解析エラーを防ぐための処理
         if "率:" in text and "量:" in text:
-            rate = text.split("率:")[1].split(",")[0].strip()
-            volume = text.split("量:")[1].strip()
-        else:
-            print("AIの回答形式が想定外です")
-            
+            # 「率:」と「量:」の間にある数字を正確に切り出す
+            rate = text.split("率:")[1].split(",")[0].replace("%", "").strip()
+            volume = text.split("量:")[1].replace("千m3", "").replace(",", "").strip()
+        
     except Exception as e:
         print(f"エラー発生: {e}")
     
     return rate, volume
 
+# create_image関数は以前のままでOKです（変更なし）
 def create_image(rate, volume):
     print("--- 3. 画像の作成を開始します ---")
     jst = timezone(timedelta(hours=+9), 'JST')
@@ -57,7 +65,7 @@ def create_image(rate, volume):
     
     bg_file, font_file = "background.jpg", "font.ttf"
     if not os.path.exists(bg_file) or not os.path.exists(font_file):
-        print("背景画像またはフォントが見つかりません")
+        print("ファイル不足")
         return
 
     img = Image.open(bg_file)
