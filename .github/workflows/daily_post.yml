@@ -20,15 +20,24 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 Pillow google-generativeai playwright
-          # ここでブラウザ本体と必要な部品をインストールします
-          playwright install chromium
-          playwright install-deps chromium
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
 
       - name: Run script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dam-debug
+          path: |
+            temp_shot_full.png
+            temp_shot.png
+            ai_raw.txt
+            result.jpg
 
       - name: Commit and push if changed
         run: |
