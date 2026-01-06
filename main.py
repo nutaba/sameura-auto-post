@@ -2,14 +2,15 @@ import os
 import requests
 import re
 from PIL import Image, ImageDraw, ImageFont
-from datetime import datetime # 日付用の機能を追加
+from datetime import datetime, timedelta, timezone
 
 def get_data():
     print("--- データの取得を開始します ---")
     rate, weather = "92.5", "晴れ"
     
-    # 今日の日付を取得 (例: 2026年1月6日)
-    now = datetime.now()
+    # 日本時間 (JST) で日付を取得するように修正
+    jst = timezone(timedelta(hours=+9), 'JST')
+    now = datetime.now(jst)
     date_str = now.strftime('%Y年%m月%d日')
     
     try:
@@ -30,28 +31,29 @@ def create_image(rate, weather, date_str):
 
     try:
         img = Image.open(bg_file)
+        # 画像のサイズを取得して中央を計算できるようにする
+        W, H = img.size
         draw = ImageDraw.Draw(img)
         
-        # フォントサイズの設定
         font_main = ImageFont.truetype(font_file, 150)
         font_sub = ImageFont.truetype(font_file, 80)
-        font_date = ImageFont.truetype(font_file, 60) # 日付用（少し小さめ）
+        font_date = ImageFont.truetype(font_file, 70) 
         
-        # 縁取り設定
-        line_settings = {"fill": "white", "stroke_width": 8, "stroke_fill": "black"}
+        line_settings = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
 
-        # 1. 日付を一番上に書く (少し右上に寄せる場合は x を大きくしてください)
-        draw.text((100, 150), date_str, font=font_date, **line_settings)
+        # 日付：一番上に配置 (y=80)
+        draw.text((100, 80), date_str, font=font_date, **line_settings)
 
-        # 2. 貯水率と天気を書く
-        draw.text((100, 400), "早明浦ダム貯水率", font=font_sub, **line_settings)
-        draw.text((100, 500), f"{rate}%", font=font_main, **line_settings)
+        # ダム情報：少し下にずらして配置
+        draw.text((100, 350), "早明浦ダム貯水率", font=font_sub, **line_settings)
+        draw.text((120, 480), f"{rate}%", font=font_main, **line_settings)
         
-        draw.text((100, 800), "本山町の天気", font=font_sub, **line_settings)
-        draw.text((100, 900), f"{weather}", font=font_sub, **line_settings)
+        # 天気：さらに下に配置
+        draw.text((100, 750), "本山町の天気", font=font_sub, **line_settings)
+        draw.text((120, 870), f"{weather}", font=font_sub, **line_settings)
         
         img.save("result.jpg")
-        print(f"成功：{date_str} 版の result.jpg を作成しました")
+        print(f"成功：{date_str} 版を作成しました")
     except Exception as e:
         print(f"画像作成中にエラー発生: {e}")
 
