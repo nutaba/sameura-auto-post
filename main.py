@@ -23,6 +23,7 @@ WMO_MAP = {
     95: "雷雨",
 }
 
+
 # ------------------------------
 # Gemini utilities
 # ------------------------------
@@ -35,6 +36,7 @@ def pick_model_name():
 
 
 def extract_text_from_response(response):
+    # response.text が不安定な場合があるので parts 優先
     try:
         cand = response.candidates[0]
         parts = getattr(cand.content, "parts", []) or []
@@ -53,8 +55,9 @@ def salvage_json(text: str):
         t = m.group(0)
     if t.endswith("}"):
         return t
+    t = t.rstrip()
     if t.endswith(","):
-        t = t[:-1]
+        t = t[:-1].rstrip()
     return t + "}"
 
 
@@ -63,8 +66,7 @@ def salvage_json(text: str):
 # ------------------------------
 def get_weather_motoyama():
     """
-    表示用に短く整形した天気文字列を返す
-    例: "本山町　快晴 2.2℃"
+    例: "本山町　快晴 1.8℃"
     """
     try:
         url = "https://api.open-meteo.com/v1/forecast"
@@ -84,72 +86,132 @@ def get_weather_motoyama():
 
         cond = WMO_MAP.get(int(wcode), "不明") if wcode is not None else "不明"
         temp_str = f"{temp:.1f}℃" if isinstance(temp, (int, float)) else "--℃"
-
         return f"本山町　{cond} {temp_str}"
-
     except Exception:
         return "本山町　天気不明"
 
 
 # ------------------------------
-# Sameura Dam rate
+# Screenshot
 # ------------------------------
-def get_sameura_rate_with_ai():
-    rate = "--"
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return rate
-
-    with open("ai_raw.txt", "w", encoding="utf-8") as f:
-        f.write("ai_raw placeholder\n")
-
+def take_dam_screenshot(wait_ms: int, out_png: str):
+    """
+    wait_ms だけ待ってからスクショ。表示が遅い日対策。
+    """
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+            ],
+        )
         context = browser.new_context(
             viewport={"width": 1400, "height": 900},
             device_scale_factor=2,
             locale="ja-JP",
         )
         page = context.new_page()
-        page.goto(DAM_URL, wait_until="domcontentloaded")
-        page.wait_for_timeout(2000)
-        page.screenshot(path="temp_shot.png")
+
+        # networkidle の方が安定しやすい
+        page.goto(DAM_URL, wait_until="networkidle", timeout=60000)
+
+        # さらに少し待つ（描画待ち）
+        page.wait_for_timeout(wait_ms)
+
+        # 画面内に「貯水率」という文字が出るまで待つ（出なければスキップ）
+        # ※ 要素が無いページでも落ちないよう try
+        try:
+            page.wait_for_function("() => document.body && document.body.innerText.includes('貯水率')", timeout=15000)
+        except Exception:
+            pass
+
+        page.screenshot(path=out_png)
         browser.close()
 
+
+# ------------------------------
+# Sameura Dam rate via Gemini (retry)
+# ------------------------------
+def read_rate_from_image(img_path: str, api_key: str) -> str:
+    """
+    Geminiで rate を読む。失敗したら "--"
+    """
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
         pick_model_name(),
         generation_config={"temperature": 0, "max_output_tokens": 256},
     )
 
-    img_file = genai.upload_file(path="temp_shot.png")
+    img_file = genai.upload_file(path=img_path)
 
     prompt = """
-出力は JSON のみ。
-画像から「貯水率(利水容量)」の数値だけを読む。
-{"rate": <number>}
+出力は 生のJSONのみ。```json 等のコードブロックは禁止。
+画像から「貯水率(利水容量)」の数値だけを読み取る（%記号なし、例: 91.10）。
+必ず1行で返す：{"rate": <number or null>}
+読めない場合は null。
 """.strip()
 
     response = model.generate_content([prompt, img_file])
     text = extract_text_from_response(response)
 
-    with open("ai_raw.txt", "w", encoding="utf-8") as f:
-        f.write(text)
+    # たまに ```json だけになる事故の保険
+    if text.strip() in ("```json", "```", ""):
+        response = model.generate_content([prompt + "\n今すぐJSON本文を1行で。", img_file])
+        text = extract_text_from_response(response)
 
-    fixed = salvage_json(text)
-    try:
-        data = json.loads(fixed)
-        r = float(data.get("rate"))
-        if 0 <= r <= 100:
-            rate = f"{r:.2f}"
-    except Exception:
-        pass
+    return text
+
+
+def get_sameura_rate_with_ai():
+    rate = "--"
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return rate
+
+    # 毎回ログを残す
+    with open("ai_raw.txt", "w", encoding="utf-8") as f:
+        f.write("ai_raw placeholder\n")
+
+    # 2回リトライ：待ち時間を変えて撮り直す
+    attempts = [
+        (4000, "temp_shot.png"),     # まずは短め
+        (12000, "temp_shot2.png"),   # ダメなら長め
+    ]
+
+    for idx, (wait_ms, shot_name) in enumerate(attempts, start=1):
+        try:
+            take_dam_screenshot(wait_ms=wait_ms, out_png=shot_name)
+
+            text = read_rate_from_image(shot_name, api_key)
+
+            # どの試行の結果か分かるように保存
+            with open("ai_raw.txt", "w", encoding="utf-8") as f:
+                f.write(f"[TRY {idx}] screenshot={shot_name}\n{text}\n")
+
+            fixed = salvage_json(text)
+            data = json.loads(fixed)
+
+            r = data.get("rate")
+            if r is None:
+                continue
+
+            rf = float(r)
+            if 0 <= rf <= 100:
+                rate = f"{rf:.2f}"
+                break
+
+        except Exception as e:
+            with open("ai_raw.txt", "a", encoding="utf-8") as f:
+                f.write(f"\n[TRY {idx} ERROR] {e}\n")
+            continue
 
     return rate
 
 
 # ------------------------------
-# Image
+# Image composition
 # ------------------------------
 def create_image(rate: str, weather: str):
     jst = timezone(timedelta(hours=9), "JST")
