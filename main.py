@@ -2,6 +2,7 @@ import os
 import time
 import json
 import re
+import requests
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
@@ -11,12 +12,9 @@ URL = "https://suibo-kouho.suibou.pref.kochi.lg.jp/suibou/graph/model_dam_8.html
 
 
 # ------------------------------
-# Gemini ユーティリティ
+# Gemini utilities
 # ------------------------------
 def pick_model_name():
-    """
-    generateContent が使える Gemini モデルを自動選択
-    """
     for m in genai.list_models():
         methods = getattr(m, "supported_generation_methods", []) or []
         if "generateContent" in methods:
@@ -25,10 +23,6 @@ def pick_model_name():
 
 
 def extract_text_from_response(response):
-    """
-    response.text が不安定な場合があるため、
-    candidates[0].content.parts[].text を優先して全文を組み立てる
-    """
     try:
         cand = response.candidates[0]
         parts = getattr(cand.content, "parts", []) or []
@@ -41,13 +35,7 @@ def extract_text_from_response(response):
 
 
 def salvage_json(text: str):
-    """
-    途中で切れた JSON を可能な限り復旧する
-    例: {"rate": 91.20,  → {"rate": 91.20}
-    """
     t = (text or "").strip()
-
-    # 最初の { 以降だけにする
     m = re.search(r"\{.*", t, flags=re.DOTALL)
     if m:
         t = m.group(0)
@@ -58,34 +46,97 @@ def salvage_json(text: str):
     t = t.rstrip()
     if t.endswith(","):
         t = t[:-1].rstrip()
-
     return t + "}"
 
 
 # ------------------------------
-# データ取得
+# Weather (Motoyama, Kochi) via Open-Meteo
 # ------------------------------
-def get_data_with_ai():
-    print("--- 1. 高知県のダム図解ページを撮影中 ---")
+WMO_MAP = {
+    0: "快晴", 1: "晴れ", 2: "薄曇り", 3: "くもり",
+    45: "霧", 48: "霧",
+    51: "霧雨", 53: "霧雨", 55: "霧雨",
+    56: "凍る霧雨", 57: "凍る霧雨",
+    61: "小雨", 63: "雨", 65: "大雨",
+    66: "凍る雨", 67: "凍る雨",
+    71: "小雪", 73: "雪", 75: "大雪",
+    77: "霰",
+    80: "にわか雨", 81: "にわか雨", 82: "激しいにわか雨",
+    85: "にわか雪", 86: "激しいにわか雪",
+    95: "雷雨", 96: "雷雨(雹)", 99: "雷雨(雹)",
+}
 
-    rate, volume = "--", "--"
+def get_motoyama_latlon():
+    # Open-Meteo geocoding (no key)
+    q = "本山町 高知県"
+    url = "https://geocoding-api.open-meteo.com/v1/search"
+    r = requests.get(url, params={"name": q, "count": 1, "language": "ja", "format": "json"}, timeout=15)
+    r.raise_for_status()
+    data = r.json()
+    results = data.get("results") or []
+    if not results:
+        raise RuntimeError("geocoding結果なし")
+    return float(results[0]["latitude"]), float(results[0]["longitude"])
 
+def get_weather_motoyama():
+    """
+    画像に載せる用の短い天気文字列を返す
+    例: "本山町 天気: くもり 8.3℃ / 降水30%"
+    """
+    try:
+        lat, lon = get_motoyama_latlon()
+
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "current": "temperature_2m,weather_code",
+            "daily": "precipitation_probability_max",
+            "timezone": "Asia/Tokyo",
+        }
+        r = requests.get(url, params=params, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+
+        current = data.get("current") or {}
+        daily = data.get("daily") or {}
+
+        temp = current.get("temperature_2m")
+        wcode = current.get("weather_code")
+        pop_list = daily.get("precipitation_probability_max") or []
+        pop = pop_list[0] if pop_list else None
+
+        cond = WMO_MAP.get(int(wcode), "天気不明") if wcode is not None else "天気不明"
+        temp_str = f"{temp:.1f}℃" if isinstance(temp, (int, float)) else "--℃"
+        pop_str = f"{int(pop)}%" if isinstance(pop, (int, float)) else "--%"
+
+        return f"本山町 天気: {cond} {temp_str} / 降水{pop_str}"
+
+    except Exception as e:
+        # 失敗しても画像生成は続ける
+        return f"本山町 天気: --（取得失敗）"
+
+
+# ------------------------------
+# Dam rate via screenshot + Gemini
+# ------------------------------
+def get_rate_with_ai():
+    print("--- 1. 早明浦ダムページを撮影中 ---")
+
+    rate = "--"
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         print("GEMINI_API_KEY が未設定")
-        return rate, volume
+        return rate
 
-    # ★ 必ず ai_raw.txt を作る（失敗時も artifact に残す）
+    # ai_raw.txt は必ず作る
     with open("ai_raw.txt", "w", encoding="utf-8") as f:
         f.write("ai_raw placeholder\n")
 
-    # ===== Playwrightでスクショ =====
+    # Screenshot
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-dev-shm-usage"]
-            )
+            browser = p.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
             context = browser.new_context(
                 viewport={"width": 1400, "height": 900},
                 device_scale_factor=2,
@@ -103,57 +154,41 @@ def get_data_with_ai():
         with open("ai_raw.txt", "a", encoding="utf-8") as f:
             f.write(f"\n[SCREENSHOT ERROR] {e}\n")
         print("スクショでエラー:", e)
-        return rate, volume
+        return rate
 
-    print("--- 2. AI(Gemini)が数値を抽出中 ---")
+    print("--- 2. Geminiで貯水率を抽出中 ---")
 
-    # ===== Gemini =====
     try:
         genai.configure(api_key=api_key)
-
         model_name = pick_model_name()
         print("使用するGeminiモデル:", model_name)
 
         model = genai.GenerativeModel(
             model_name,
-            generation_config={
-                "temperature": 0,
-                "max_output_tokens": 512,
-            },
+            generation_config={"temperature": 0, "max_output_tokens": 512},
         )
 
         img_file = genai.upload_file(path="temp_shot.png")
 
         prompt = """
-出力は 生のJSONのみ。
-```json のようなコードブロックは禁止。
-
-画像から次を読み取る：
-- rate: 貯水率(利水容量)（%記号なし。例: 91.20）
-- volume: 貯水量（カンマなし。例: 106270 または 106270.000）
-
-必ず1行で返す：
-{"rate": <number or null>, "volume": <number or null>}
-
-改行禁止。途中で切らない。
-読めない場合は null。
+出力は 生のJSONのみ。```json 等のコードブロックは禁止。
+画像から「貯水率(利水容量)」の数値だけを読み取る（%記号なし。例: 91.20）。
+必ず1行で返す：{"rate": <number or null>}
+改行禁止。読めない場合は null。
 """.strip()
 
         response = model.generate_content([prompt, img_file])
         text = extract_text_from_response(response)
 
-        # ```json 事故 or 空文字 の最終保険（1回だけ再試行）
         if text.strip() in ("```json", "```", ""):
             retry_prompt = prompt + "\n今すぐJSON本文を1行で出力。"
             response = model.generate_content([retry_prompt, img_file])
             text = extract_text_from_response(response)
 
         print("AIの生回答:", repr(text))
-
         with open("ai_raw.txt", "w", encoding="utf-8") as f:
             f.write(text)
 
-        # ===== JSON パース（復旧付き） =====
         fixed = salvage_json(text)
         try:
             data = json.loads(fixed)
@@ -161,9 +196,6 @@ def get_data_with_ai():
             data = {}
 
         r = data.get("rate")
-        v = data.get("volume")
-
-        # ===== 値チェック =====
         if r is not None:
             try:
                 rf = float(r)
@@ -172,26 +204,18 @@ def get_data_with_ai():
             except:
                 pass
 
-        if v is not None:
-            try:
-                vf = float(str(v).replace(",", ""))
-                if vf >= 0:
-                    volume = str(int(vf))
-            except:
-                pass
-
     except Exception as e:
         with open("ai_raw.txt", "a", encoding="utf-8") as f:
             f.write(f"\n[GEMINI ERROR] {e}\n")
         print("Geminiでエラー:", e)
 
-    return rate, volume
+    return rate
 
 
 # ------------------------------
-# 画像生成
+# Image composition
 # ------------------------------
-def create_image(rate, volume):
+def create_image(rate: str, weather_line: str):
     print("--- 3. 画像合成中 ---")
 
     jst = timezone(timedelta(hours=9), "JST")
@@ -210,24 +234,25 @@ def create_image(rate, volume):
     f_main = ImageFont.truetype(font_file, 130)
     f_sub = ImageFont.truetype(font_file, 70)
     f_date = ImageFont.truetype(font_file, 60)
+    f_weather = ImageFont.truetype(font_file, 52)
 
     line = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
 
+    # 日時
     draw.text((100, 80), date_str, font=f_date, **line)
 
-    draw.text((100, 300), "貯水率", font=f_sub, **line)
-    draw.text((120, 380), f"{rate}%", font=f_main, **line)
+    # 天気（上部に追加）
+    draw.text((100, 165), weather_line, font=f_weather, **line)
 
-    draw.text((100, 550), "貯水量", font=f_sub, **line)
-    draw.text((120, 630), f"{volume}千m³", font=f_main, **line)
+    # 貯水率のみ
+    draw.text((100, 320), "貯水率", font=f_sub, **line)
+    draw.text((120, 400), f"{rate}%", font=f_main, **line)
 
     img.save("result.jpg")
-    print(f"合成完了: 率={rate}, 量={volume}")
+    print(f"合成完了: rate={rate} / weather='{weather_line}'")
 
 
-# ------------------------------
-# 実行
-# ------------------------------
 if __name__ == "__main__":
-    r, v = get_data_with_ai()
-    create_image(r, v)
+    weather = get_weather_motoyama()
+    r = get_rate_with_ai()
+    create_image(r, weather)
