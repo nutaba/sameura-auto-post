@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import re
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
@@ -9,21 +10,23 @@ import google.generativeai as genai
 URL = "https://suibo-kouho.suibou.pref.kochi.lg.jp/suibou/graph/model_dam_8.html?unq=12473017225"
 
 
+# ------------------------------
+# Gemini ユーティリティ
+# ------------------------------
 def pick_model_name():
     """
     generateContent が使える Gemini モデルを自動選択
-    （モデル名変更で壊れないようにする）
     """
     for m in genai.list_models():
         methods = getattr(m, "supported_generation_methods", []) or []
         if "generateContent" in methods:
-            return m.name  # 例: models/gemini-2.5-flash
+            return m.name
     raise RuntimeError("generateContent 対応の Gemini モデルが見つかりません")
 
 
 def extract_text_from_response(response):
     """
-    response.text が不安定なケース対策：
+    response.text が不安定な場合があるため、
     candidates[0].content.parts[].text を優先して全文を組み立てる
     """
     try:
@@ -34,11 +37,34 @@ def extract_text_from_response(response):
             return text
     except Exception:
         pass
-
-    # 最後の手段
     return (getattr(response, "text", "") or "").strip()
 
 
+def salvage_json(text: str):
+    """
+    途中で切れた JSON を可能な限り復旧する
+    例: {"rate": 91.20,  → {"rate": 91.20}
+    """
+    t = (text or "").strip()
+
+    # 最初の { 以降だけにする
+    m = re.search(r"\{.*", t, flags=re.DOTALL)
+    if m:
+        t = m.group(0)
+
+    if t.endswith("}"):
+        return t
+
+    t = t.rstrip()
+    if t.endswith(","):
+        t = t[:-1].rstrip()
+
+    return t + "}"
+
+
+# ------------------------------
+# データ取得
+# ------------------------------
 def get_data_with_ai():
     print("--- 1. 高知県のダム図解ページを撮影中 ---")
 
@@ -49,7 +75,7 @@ def get_data_with_ai():
         print("GEMINI_API_KEY が未設定")
         return rate, volume
 
-    # ★ ai_raw.txt は必ず作る（失敗時も artifact に残す）
+    # ★ 必ず ai_raw.txt を作る（失敗時も artifact に残す）
     with open("ai_raw.txt", "w", encoding="utf-8") as f:
         f.write("ai_raw placeholder\n")
 
@@ -92,49 +118,50 @@ def get_data_with_ai():
             model_name,
             generation_config={
                 "temperature": 0,
-                "max_output_tokens": 256,
+                "max_output_tokens": 512,
             },
         )
 
         img_file = genai.upload_file(path="temp_shot.png")
 
         prompt = """
-出力は **生のJSONのみ**。
-```json のようなコードブロック（コードフェンス）は絶対に付けない。
+出力は 生のJSONのみ。
+```json のようなコードブロックは禁止。
 
-画像から次の2つを読み取る：
-- rate: 貯水率(利水容量) の数値（%記号なし。例: 91.20）
-- volume: 貯水量 の数値（カンマなし。例: 106270 または 106270.000）
+画像から次を読み取る：
+- rate: 貯水率(利水容量)（%記号なし。例: 91.20）
+- volume: 貯水量（カンマなし。例: 106270 または 106270.000）
 
-返すのはこの1行だけ：
+必ず1行で返す：
 {"rate": <number or null>, "volume": <number or null>}
 
+改行禁止。途中で切らない。
 読めない場合は null。
 """.strip()
 
         response = model.generate_content([prompt, img_file])
-
         text = extract_text_from_response(response)
 
-        # ```json だけ出る事故への最終保険（1回だけ再試行）
+        # ```json 事故 or 空文字 の最終保険（1回だけ再試行）
         if text.strip() in ("```json", "```", ""):
-            retry_prompt = prompt + "\n今すぐJSON本文を出力して。コードフェンス禁止。"
+            retry_prompt = prompt + "\n今すぐJSON本文を1行で出力。"
             response = model.generate_content([retry_prompt, img_file])
             text = extract_text_from_response(response)
 
         print("AIの生回答:", repr(text))
 
-        # ★ 生回答を必ず保存
         with open("ai_raw.txt", "w", encoding="utf-8") as f:
             f.write(text)
 
-        # ===== JSONパース =====
+        # ===== JSON パース（復旧付き） =====
+        fixed = salvage_json(text)
         try:
-            data = json.loads(text)
-            r = data.get("rate")
-            v = data.get("volume")
+            data = json.loads(fixed)
         except Exception:
-            r, v = None, None
+            data = {}
+
+        r = data.get("rate")
+        v = data.get("volume")
 
         # ===== 値チェック =====
         if r is not None:
@@ -161,6 +188,9 @@ def get_data_with_ai():
     return rate, volume
 
 
+# ------------------------------
+# 画像生成
+# ------------------------------
 def create_image(rate, volume):
     print("--- 3. 画像合成中 ---")
 
@@ -195,6 +225,9 @@ def create_image(rate, volume):
     print(f"合成完了: 率={rate}, 量={volume}")
 
 
+# ------------------------------
+# 実行
+# ------------------------------
 if __name__ == "__main__":
     r, v = get_data_with_ai()
     create_image(r, v)
