@@ -241,3 +241,33 @@ if __name__ == "__main__":
     weather = get_weather_motoyama()
     rate = get_sameura_rate_with_ai()
     create_image(rate, weather)
+
+from instagrapi import Client
+
+def post_to_instagram_story():
+    print("--- Instagramストーリーズに投稿中 ---")
+    username = os.environ.get("INSTAGRAM_USERNAME")
+    password = os.environ.get("INSTAGRAM_PASSWORD")
+    
+    if not username or not password:
+        print("Instagramの資格情報が設定されていません")
+        return
+
+    try:
+        cl = Client()
+        # ログイン（セッション管理をしない簡易版）
+        cl.login(username, password)
+        
+        # ストーリーズに投稿
+        # result.jpg はPillowで作った画像の名前
+        cl.photo_upload_to_story("result.jpg", caption="早明浦ダムの貯水率をお届けします")
+        print("Instagramストーリーズへの投稿に成功しました！")
+    except Exception as e:
+        print(f"Instagram投稿エラー: {e}")
+
+# mainの最後に呼び出す
+if __name__ == "__main__":
+    weather = get_weather_motoyama()
+    rate = get_sameura_rate_with_ai()
+    create_image(rate, weather)
+    post_to_instagram_story() # ここを追加
