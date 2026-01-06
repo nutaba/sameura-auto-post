@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 def get_data():
     print("--- データの取得を開始します ---")
     
-    # 確実にデータが存在する「一覧表ページ」を解析対象にします
+    # 国土交通省のリアルタイムダム諸量一覧表ページ
     dam_url = "https://www1.river.go.jp/cgi-bin/DspDamData.exe?ID=1368080700010&KIND=3&PAGE=0"
     rate = "--"
     
@@ -17,28 +17,23 @@ def get_data():
         res.encoding = 'shift_jis'
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 表のすべての行を取得
+        # 表のすべての行(tr)を確認
         rows = soup.find_all('tr')
         
-        # 上から順に見て、7番目の列（貯水率）に数字が入っている最初の行を探す
-        found = False
         for row in rows:
             cols = row.find_all('td')
+            # 貯水率が含まれる7列目以降があるか確認
             if len(cols) >= 7:
                 val = cols[6].get_text(strip=True)
-                # 「-」や空欄ではなく、数字（小数点含む）が入っているか判定
+                # ハイフン(-)ではなく、数字(91.1など)が入っている最新の行を採用
                 if val and val != "-" and val.replace('.', '', 1).isdigit():
                     rate = val
-                    print(f"成功：{cols[0].get_text(strip=True)} {cols[1].get_text(strip=True)} の貯水率 {rate}% を採用しました。")
-                    found = True
+                    print(f"成功：{cols[0].get_text(strip=True)} {cols[1].get_text(strip=True)} のデータ({rate}%)を採用しました。")
                     break
-        if not found:
-            print("警告：表の中に有効な貯水率の数値が見つかりませんでした。")
-            
     except Exception as e:
         print(f"ダムデータ取得エラー: {e}")
 
-    # 日本時間で日付を取得
+    # 日本時間(JST)で日付を取得
     jst = timezone(timedelta(hours=+9), 'JST')
     date_str = datetime.now(jst).strftime('%Y年%m月%d日')
 
@@ -57,27 +52,30 @@ def create_image(rate, weather, date_str):
     font_file = "font.ttf"
     
     if not os.path.exists(bg_file) or not os.path.exists(font_file):
-        print("エラー: 必要なファイルがありません。")
+        print("エラー: background.jpg または font.ttf がありません。")
         return
 
     try:
         img = Image.open(bg_file)
         draw = ImageDraw.Draw(img)
+        
+        # フォントサイズ（適宜調整してください）
         font_main = ImageFont.truetype(font_file, 150)
         font_sub = ImageFont.truetype(font_file, 80)
         font_date = ImageFont.truetype(font_file, 70) 
         
+        # 縁取り設定
         line_settings = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
 
+        # 文字の配置
         draw.text((100, 80), date_str, font=font_date, **line_settings)
         draw.text((100, 350), "早明浦ダム貯水率", font=font_sub, **line_settings)
-        # 貯水率の表示
         draw.text((120, 480), f"{rate}%", font=font_main, **line_settings)
         draw.text((100, 750), "本山町の天気", font=font_sub, **line_settings)
         draw.text((120, 870), f"{weather}", font=font_sub, **line_settings)
         
         img.save("result.jpg")
-        print("成功：画像を保存しました")
+        print("成功：result.jpg を作成・更新しました。")
     except Exception as e:
         print(f"画像作成エラー: {e}")
 
