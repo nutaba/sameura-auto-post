@@ -2,9 +2,7 @@ name: Update Instagram Story
 
 on:
   schedule:
-    # 日本時間の毎日午前9:00（世界標準時 0:00）に実行
     - cron: '0 0 * * *'
-  # ボタン操作による手動実行も可能にする
   workflow_dispatch:
 
 permissions:
@@ -20,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.11' # 3.9から3.11へ変更
 
       - name: Install dependencies
         run: |
