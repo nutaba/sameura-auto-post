@@ -3,6 +3,9 @@ name: Update Daily Image
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,9 +19,15 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 Pillow
+        run: |
+          pip install requests beautifulsoup4 Pillow google-generativeai playwright
+          # ブラウザ本体と、実行に必要な部品をインストールします
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: Run script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
 
       - name: Commit and push if changed
@@ -26,5 +35,5 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add result.jpg
-          git commit -m "Update daily image" || exit 0
+          git commit -m "Update daily image with AI" || exit 0
           git push
