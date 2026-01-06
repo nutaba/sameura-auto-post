@@ -1,6 +1,5 @@
 import os
 import time
-import re
 import json
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime, timedelta, timezone
@@ -10,10 +9,21 @@ import google.generativeai as genai
 URL = "https://suibo-kouho.suibou.pref.kochi.lg.jp/suibou/graph/model_dam_8.html?unq=12473017225"
 
 
+def pick_model_name():
+    """
+    generateContent が使える Gemini モデルを自動で1つ選ぶ
+    （モデル名変更で壊れないようにするため）
+    """
+    for m in genai.list_models():
+        methods = getattr(m, "supported_generation_methods", []) or []
+        if "generateContent" in methods:
+            return m.name  # 例: models/gemini-2.5-flash
+    raise RuntimeError("generateContent 対応の Gemini モデルが見つかりません")
+
+
 def get_data_with_ai():
     print("--- 1. 高知県のダム図解ページを撮影中 ---")
 
-    # 初期値
     rate, volume = "--", "--"
 
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -21,7 +31,7 @@ def get_data_with_ai():
         print("GEMINI_API_KEY が未設定")
         return rate, volume
 
-    # ===== 先に ai_raw.txt を必ず作る（重要） =====
+    # ★ ai_raw.txt は必ず作る（失敗時も artifact に残す）
     with open("ai_raw.txt", "w", encoding="utf-8") as f:
         f.write("ai_raw placeholder\n")
 
@@ -57,8 +67,11 @@ def get_data_with_ai():
     try:
         genai.configure(api_key=api_key)
 
+        model_name = pick_model_name()
+        print("使用するGeminiモデル:", model_name)
+
         model = genai.GenerativeModel(
-            "gemini-1.5-flash",
+            model_name,
             generation_config={
                 "temperature": 0,
                 "max_output_tokens": 128,
@@ -87,19 +100,17 @@ def get_data_with_ai():
 
         print("AIの生回答:", text)
 
-        # ===== 生回答を必ず保存 =====
+        # ★ 生回答を必ず保存
         with open("ai_raw.txt", "w", encoding="utf-8") as f:
             f.write(text)
 
-        # ===== JSONでパース =====
+        # ===== JSONパース =====
         try:
             data = json.loads(text)
             r = data.get("rate")
             v = data.get("volume")
         except Exception:
-            # JSONが壊れていた場合の保険
-            r = None
-            v = None
+            r, v = None, None
 
         # ===== 値チェック =====
         if r is not None:
