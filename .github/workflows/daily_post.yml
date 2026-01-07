@@ -1,8 +1,8 @@
-name: daily_post
+name: Daily Dam Image
 
 on:
   schedule:
-    - cron: "0 0 * * *"  # JST 9:00（UTC 0:00）
+    - cron: "0 0 * * *"  # JST 09:00 = UTC 00:00
   workflow_dispatch:
 
 permissions:
@@ -11,9 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -27,16 +26,26 @@ jobs:
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
 
-      - name: Generate image
+      - name: Run script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          python main.py
+        run: python main.py
 
-      - name: Commit result.jpg
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dam-debug
+          path: |
+            result.jpg
+            ai_raw.txt
+            temp_shot*.png
+            bg_used.txt
+
+      - name: Commit and push if changed
         run: |
-          git config user.name "actions-user"
-          git config user.email "actions-user@users.noreply.github.com"
-          git add result.jpg ai_raw.txt temp_shot*.png || true
-          git commit -m "Update daily image" || echo "No changes to commit"
+          git config --local user.email "actions-user@users.noreply.github.com"
+          git config --local user.name "actions-user"
+          git add result.jpg ai_raw.txt bg_used.txt || true
+          git commit -m "Update daily image" || exit 0
           git push
