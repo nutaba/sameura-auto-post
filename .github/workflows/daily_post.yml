@@ -1,9 +1,9 @@
-name: Daily Dam Image
+name: daily_post
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "0 0 * * *"  # 毎日 09:00 JST
+    - cron: "0 0 * * *"  # JST 9:00（UTC 0:00）
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,39 +11,32 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-
-      - name: Install deps
+      - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium
 
-      - name: Run main
+      - name: Generate image
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python main.py
+        run: |
+          python main.py
 
-      - name: Upload result.jpg to Google Drive
-        env:
-          GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
-        run: python upload_to_drive.py
-
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dam-debug
-          path: |
-            ai_raw.txt
-            temp_shot.png
-            temp_shot2.png
-            result.jpg
+      - name: Commit result.jpg
+        run: |
+          git config user.name "actions-user"
+          git config user.email "actions-user@users.noreply.github.com"
+          git add result.jpg ai_raw.txt temp_shot*.png || true
+          git commit -m "Update daily image" || echo "No changes to commit"
+          git push
