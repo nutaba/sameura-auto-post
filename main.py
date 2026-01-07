@@ -9,6 +9,9 @@ from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 import google.generativeai as genai
 
+# ==============================
+# 設定
+# ==============================
 DAM_URL = "https://suibo-kouho.suibou.pref.kochi.lg.jp/suibou/graph/model_dam_8.html?unq=12473017225"
 
 # 本山町（固定座標）
@@ -25,9 +28,9 @@ WMO_MAP = {
     95: "雷雨",
 }
 
-# ------------------------------
+# ==============================
 # Gemini utilities
-# ------------------------------
+# ==============================
 def pick_model_name():
     for m in genai.list_models():
         methods = getattr(m, "supported_generation_methods", []) or []
@@ -48,23 +51,15 @@ def extract_text_from_response(response):
 
 def salvage_json(text: str):
     t = (text or "").strip()
-    m = re.search(r"\{.*", t, flags=re.DOTALL)
-    if m:
-        t = m.group(0)
-    if t.endswith("}"):
-        return t
-    t = t.rstrip()
-    if t.endswith(","):
-        t = t[:-1].rstrip()
-    return t + "}"
+    m = re.search(r"\{.*\}", t, flags=re.DOTALL)
+    if not m:
+        return "{}"
+    return m.group(0)
 
-# ------------------------------
+# ==============================
 # Weather (Motoyama)
-# ------------------------------
+# ==============================
 def get_weather_motoyama():
-    """
-    例: "本山町　快晴 1.8℃"
-    """
     try:
         url = "https://api.open-meteo.com/v1/forecast"
         params = {
@@ -87,13 +82,10 @@ def get_weather_motoyama():
     except Exception:
         return "本山町　天気不明"
 
-# ------------------------------
+# ==============================
 # Screenshot
-# ------------------------------
+# ==============================
 def take_dam_screenshot(wait_ms: int, out_png: str):
-    """
-    wait_ms だけ待ってからスクショ。表示が遅い日対策。
-    """
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -109,24 +101,14 @@ def take_dam_screenshot(wait_ms: int, out_png: str):
             locale="ja-JP",
         )
         page = context.new_page()
-
         page.goto(DAM_URL, wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(wait_ms)
-
-        try:
-            page.wait_for_function(
-                "() => document.body && document.body.innerText.includes('貯水率')",
-                timeout=15000
-            )
-        except Exception:
-            pass
-
         page.screenshot(path=out_png)
         browser.close()
 
-# ------------------------------
-# Sameura Dam rate via Gemini (retry)
-# ------------------------------
+# ==============================
+# Sameura Dam rate via Gemini
+# ==============================
 def read_rate_from_image(img_path: str, api_key: str) -> str:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
@@ -137,29 +119,19 @@ def read_rate_from_image(img_path: str, api_key: str) -> str:
     img_file = genai.upload_file(path=img_path)
 
     prompt = """
-出力は 生のJSONのみ。```json 等のコードブロックは禁止。
-画像から「貯水率(利水容量)」の数値だけを読み取る（%記号なし、例: 91.10）。
-必ず1行で返す：{"rate": <number or null>}
-読めない場合は null。
+出力は生のJSONのみ。
+画像から「貯水率(利水容量)」の数値だけを読み取る（%なし）。
+{"rate": <number or null>}
 """.strip()
 
     response = model.generate_content([prompt, img_file])
-    text = extract_text_from_response(response)
-
-    if text.strip() in ("```json", "```", ""):
-        response = model.generate_content([prompt + "\n今すぐJSON本文を1行で。", img_file])
-        text = extract_text_from_response(response)
-
-    return text
+    return extract_text_from_response(response)
 
 def get_sameura_rate_with_ai():
     rate = "--"
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return rate
-
-    with open("ai_raw.txt", "w", encoding="utf-8") as f:
-        f.write("ai_raw placeholder\n")
 
     attempts = [
         (4000, "temp_shot.png"),
@@ -168,7 +140,70 @@ def get_sameura_rate_with_ai():
 
     for idx, (wait_ms, shot_name) in enumerate(attempts, start=1):
         try:
-            take_dam_screenshot(wait_ms=wait_ms, out_png=shot_name)
-
+            take_dam_screenshot(wait_ms, shot_name)
             text = read_rate_from_image(shot_name, api_key)
 
+            fixed = salvage_json(text)
+            data = json.loads(fixed)
+
+            r = data.get("rate")
+            if r is None:
+                continue
+
+            rf = float(r)
+            if 0 <= rf <= 100:
+                rate = f"{rf:.2f}"
+                break
+
+        except Exception:
+            continue
+
+    return rate
+
+# ==============================
+# Background picker（1分ごと）
+# ==============================
+def pick_background_per_minute(now: datetime) -> str:
+    candidates = sorted(Path("images").glob("bg_*.jpg"))
+    if not candidates:
+        return "background.jpg"
+
+    seed = int(now.strftime("%Y%m%d%H%M"))
+    rng = random.Random(seed)
+    return str(rng.choice(candidates))
+
+# ==============================
+# Image composition
+# ==============================
+def create_image(rate: str, weather: str):
+    jst = timezone(timedelta(hours=9))
+    now = datetime.now(jst)
+    date_str = now.strftime("%Y年%m月%d日 %H:%M")
+
+    bg_path = pick_background_per_minute(now)
+    img = Image.open(bg_path).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    font = ImageFont.truetype("font.ttf", 60)
+    font_big = ImageFont.truetype("font.ttf", 130)
+    font_mid = ImageFont.truetype("font.ttf", 70)
+
+    style = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
+
+    draw.text((100, 80), date_str, font=font, **style)
+    draw.text((100, 155), weather, font=font, **style)
+    draw.text((100, 300), "早明浦ダム 貯水率", font=font_mid, **style)
+    draw.text((120, 380), f"{rate}%", font=font_big, **style)
+
+    img.save("result.jpg", quality=95)
+
+    with open("bg_used.txt", "w", encoding="utf-8") as f:
+        f.write(bg_path)
+
+# ==============================
+# main
+# ==============================
+if __name__ == "__main__":
+    weather = get_weather_motoyama()
+    rate = get_sameura_rate_with_ai()
+    create_image(rate, weather)
