@@ -2,6 +2,8 @@ import os
 import json
 import re
 import requests
+import random
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
@@ -23,7 +25,6 @@ WMO_MAP = {
     95: "雷雨",
 }
 
-
 # ------------------------------
 # Gemini utilities
 # ------------------------------
@@ -34,9 +35,7 @@ def pick_model_name():
             return m.name
     raise RuntimeError("generateContent 対応の Gemini モデルが見つかりません")
 
-
 def extract_text_from_response(response):
-    # response.text が不安定な場合があるので parts 優先
     try:
         cand = response.candidates[0]
         parts = getattr(cand.content, "parts", []) or []
@@ -46,7 +45,6 @@ def extract_text_from_response(response):
     except Exception:
         pass
     return (getattr(response, "text", "") or "").strip()
-
 
 def salvage_json(text: str):
     t = (text or "").strip()
@@ -59,7 +57,6 @@ def salvage_json(text: str):
     if t.endswith(","):
         t = t[:-1].rstrip()
     return t + "}"
-
 
 # ------------------------------
 # Weather (Motoyama)
@@ -90,7 +87,6 @@ def get_weather_motoyama():
     except Exception:
         return "本山町　天気不明"
 
-
 # ------------------------------
 # Screenshot
 # ------------------------------
@@ -114,30 +110,24 @@ def take_dam_screenshot(wait_ms: int, out_png: str):
         )
         page = context.new_page()
 
-        # networkidle の方が安定しやすい
         page.goto(DAM_URL, wait_until="networkidle", timeout=60000)
-
-        # さらに少し待つ（描画待ち）
         page.wait_for_timeout(wait_ms)
 
-        # 画面内に「貯水率」という文字が出るまで待つ（出なければスキップ）
-        # ※ 要素が無いページでも落ちないよう try
         try:
-            page.wait_for_function("() => document.body && document.body.innerText.includes('貯水率')", timeout=15000)
+            page.wait_for_function(
+                "() => document.body && document.body.innerText.includes('貯水率')",
+                timeout=15000
+            )
         except Exception:
             pass
 
         page.screenshot(path=out_png)
         browser.close()
 
-
 # ------------------------------
 # Sameura Dam rate via Gemini (retry)
 # ------------------------------
 def read_rate_from_image(img_path: str, api_key: str) -> str:
-    """
-    Geminiで rate を読む。失敗したら "--"
-    """
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
         pick_model_name(),
@@ -156,13 +146,11 @@ def read_rate_from_image(img_path: str, api_key: str) -> str:
     response = model.generate_content([prompt, img_file])
     text = extract_text_from_response(response)
 
-    # たまに ```json だけになる事故の保険
     if text.strip() in ("```json", "```", ""):
         response = model.generate_content([prompt + "\n今すぐJSON本文を1行で。", img_file])
         text = extract_text_from_response(response)
 
     return text
-
 
 def get_sameura_rate_with_ai():
     rate = "--"
@@ -170,14 +158,12 @@ def get_sameura_rate_with_ai():
     if not api_key:
         return rate
 
-    # 毎回ログを残す
     with open("ai_raw.txt", "w", encoding="utf-8") as f:
         f.write("ai_raw placeholder\n")
 
-    # 2回リトライ：待ち時間を変えて撮り直す
     attempts = [
-        (4000, "temp_shot.png"),     # まずは短め
-        (12000, "temp_shot2.png"),   # ダメなら長め
+        (4000, "temp_shot.png"),
+        (12000, "temp_shot2.png"),
     ]
 
     for idx, (wait_ms, shot_name) in enumerate(attempts, start=1):
@@ -186,7 +172,6 @@ def get_sameura_rate_with_ai():
 
             text = read_rate_from_image(shot_name, api_key)
 
-            # どの試行の結果か分かるように保存
             with open("ai_raw.txt", "w", encoding="utf-8") as f:
                 f.write(f"[TRY {idx}] screenshot={shot_name}\n{text}\n")
 
@@ -209,15 +194,38 @@ def get_sameura_rate_with_ai():
 
     return rate
 
+# ------------------------------
+# Background picker (NEW)
+# ------------------------------
+def pick_daily_background(jst_now: datetime) -> str:
+    """
+    images/bg_*.jpg から「その日固定」で1枚選ぶ。
+    例：images/bg_01.jpg
+    """
+    candidates = sorted(Path("images").glob("bg_*.jpg"))
+
+    # フォールバック：従来の background.jpg
+    if not candidates:
+        return "background.jpg"
+
+    # その日のYYYYMMDDをseedにして“毎日固定”のランダム
+    seed = int(jst_now.strftime("%Y%m%d"))
+    rng = random.Random(seed)
+    chosen = rng.choice(candidates)
+    return str(chosen)
 
 # ------------------------------
 # Image composition
 # ------------------------------
 def create_image(rate: str, weather: str):
     jst = timezone(timedelta(hours=9), "JST")
-    date_str = datetime.now(jst).strftime("%Y年%m月%d日 %H:%M")
+    now = datetime.now(jst)
+    date_str = now.strftime("%Y年%m月%d日 %H:%M")
 
-    img = Image.open("background.jpg")
+    # ★ここが変更点：毎日違う背景を選ぶ
+    bg_path = pick_daily_background(now)
+
+    img = Image.open(bg_path).convert("RGB")
     draw = ImageDraw.Draw(img)
 
     font = "font.ttf"
@@ -234,8 +242,11 @@ def create_image(rate: str, weather: str):
     draw.text((100, 300), "早明浦ダム 貯水率", font=f_sub, **line)
     draw.text((120, 380), f"{rate}%", font=f_main, **line)
 
-    img.save("result.jpg")
+    img.save("result.jpg", quality=95)
 
+    # どの背景を使ったかログ出し（デバッグ用）
+    with open("bg_used.txt", "w", encoding="utf-8") as f:
+        f.write(f"{bg_path}\n")
 
 if __name__ == "__main__":
     weather = get_weather_motoyama()
