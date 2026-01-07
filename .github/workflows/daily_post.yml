@@ -1,8 +1,9 @@
-name: Daily Dam Image
+name: Update daily image
 
 on:
   schedule:
-    - cron: "0 0 * * *"  # JST 09:00 = UTC 00:00
+    # 毎日 09:00 JST（UTC 00:00）
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -11,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,23 +31,51 @@ jobs:
       - name: Run script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python main.py
+          # Slack/LINEを使っていないなら不要（消してOK）
+          # SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python main.py
 
-      - name: Upload debug artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dam-debug
-          path: |
-            result.jpg
-            ai_raw.txt
-            temp_shot*.png
-            bg_used.txt
+          # ===== キャッシュ完全回避（index.html の v= を日付で更新）=====
+          # JST の YYYYMMDD を作る
+          VERSION=$(date -u -d "+9 hours" +"%Y%m%d")
+
+          # index.html が無い場合は自動作成（初回対策）
+          if [ ! -f index.html ]; then
+            cat > index.html << 'EOF'
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>早明浦ダム 貯水率</title>
+  <style>
+    body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; }
+    img { width: 100%; max-width: 1080px; height: auto; }
+  </style>
+</head>
+<body>
+  <img src="result.jpg?v=__VERSION__" alt="早明浦ダム 貯水率" />
+</body>
+</html>
+EOF
+          fi
+
+          # __VERSION__ を今日の日付に置換
+          sed -i "s/__VERSION__/${VERSION}/g" index.html
 
       - name: Commit and push if changed
         run: |
-          git config --local user.email "actions-user@users.noreply.github.com"
-          git config --local user.name "actions-user"
-          git add result.jpg ai_raw.txt bg_used.txt || true
-          git commit -m "Update daily image" || exit 0
+          git config user.name "actions-user"
+          git config user.email "actions@github.com"
+
+          git add result.jpg index.html bg_used.txt ai_raw.txt || true
+
+          # 変更が無ければ終了
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update daily image"
           git push
