@@ -170,4 +170,5 @@ def get_sameura_rate_with_ai():
         try:
             take_dam_screenshot(wait_ms=wait_ms, out_png=shot_name)
 
-            text = read_rate_from_image(s_
+            text = read_rate_from_image(shot_name, api_key)
+
