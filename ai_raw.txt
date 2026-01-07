@@ -1,0 +1,2 @@
+[TRY 2] screenshot=temp_shot2.png
+{"rate": null}
