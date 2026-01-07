@@ -1,2 +1,2 @@
-[TRY 2] screenshot=temp_shot2.png
-{"rate": null}
+[TRY 1] screenshot=temp_shot.png
+{"rate": 89.50}
