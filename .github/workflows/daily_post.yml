@@ -2,7 +2,7 @@ name: Update daily image
 
 on:
   schedule:
-    # テスト用：1時間ごと（毎時00分）
+    # テスト用：1時間ごと（毎時00分）.
     - cron: "0 * * * *"
   workflow_dispatch:
 
