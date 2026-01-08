@@ -3,7 +3,7 @@ name: Update daily image
 on:
   schedule:
     # 毎日 09:30 JST（UTC 00:30）
-    - cron: "30 0 * * *"
+    - cron: "40 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -34,27 +34,16 @@ jobs:
         run: |
           python main.py
 
-          # ===== キャッシュ完全回避（index.html内の v= を毎日更新）=====
-          export VERSION=$(date -u -d "+9 hours" +"%Y%m%d")
+          # ===== キャッシュ完全回避 =====
+          # JST の日付を作る
+          VERSION=$(date -u -d "+9 hours" +"%Y%m%d")
 
-          python - <<'PY'
-          import os, re
-          from pathlib import Path
-
-          version = os.environ["VERSION"]
-          p = Path("index.html")
-          html = p.read_text(encoding="utf-8")
-
-          # result.jpg?v=数字 を 今日の日付に置換
-          html2 = re.sub(r'(result\.jpg\?v=)\d+', r'\g<1>' + version, html)
-
-          # もし v= が無い場合は付ける（保険）
-          if html2 == html and "result.jpg" in html:
-              html2 = html.replace("result.jpg", f"result.jpg?v={version}")
-
-          p.write_text(html2, encoding="utf-8")
-          print("index.html updated to v=", version)
-          PY
+          # index.html の ?v= を置き換え（なければ付与）
+          if grep -q "result.jpg?v=" index.html; then
+            sed -i "s/result.jpg?v=[0-9]*/result.jpg?v=${VERSION}/" index.html
+          else
+            sed -i "s/result.jpg/result.jpg?v=${VERSION}/" index.html
+          fi
 
       - name: Commit and push if changed
         run: |
