@@ -29,35 +29,7 @@ WMO_MAP = {
 }
 
 # ==============================
-# Gemini utilities
-# ==============================
-def pick_model_name():
-    for m in genai.list_models():
-        methods = getattr(m, "supported_generation_methods", []) or []
-        if "generateContent" in methods:
-            return m.name
-    raise RuntimeError("generateContent 対応の Gemini モデルが見つかりません")
-
-def extract_text_from_response(response):
-    try:
-        cand = response.candidates[0]
-        parts = getattr(cand.content, "parts", []) or []
-        text = "".join([getattr(p, "text", "") for p in parts]).strip()
-        if text:
-            return text
-    except Exception:
-        pass
-    return (getattr(response, "text", "") or "").strip()
-
-def salvage_json(text: str):
-    t = (text or "").strip()
-    m = re.search(r"\{.*\}", t, flags=re.DOTALL)
-    if not m:
-        return "{}"
-    return m.group(0)
-
-# ==============================
-# Weather (Motoyama)
+# 天気（本山町）
 # ==============================
 def get_weather_motoyama():
     try:
@@ -83,17 +55,13 @@ def get_weather_motoyama():
         return "本山町　天気不明"
 
 # ==============================
-# Screenshot
+# ダム画面スクショ
 # ==============================
 def take_dam_screenshot(wait_ms: int, out_png: str):
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=[
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-            ],
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
         context = browser.new_context(
             viewport={"width": 1400, "height": 900},
@@ -107,8 +75,14 @@ def take_dam_screenshot(wait_ms: int, out_png: str):
         browser.close()
 
 # ==============================
-# Sameura Dam rate via Gemini
+# Geminiで貯水率取得
 # ==============================
+def pick_model_name():
+    for m in genai.list_models():
+        if "generateContent" in getattr(m, "supported_generation_methods", []):
+            return m.name
+    raise RuntimeError("Gemini model not found")
+
 def read_rate_from_image(img_path: str, api_key: str) -> str:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
@@ -117,88 +91,66 @@ def read_rate_from_image(img_path: str, api_key: str) -> str:
     )
 
     img_file = genai.upload_file(path=img_path)
-
-    prompt = """
-出力は生のJSONのみ。
-画像から「貯水率(利水容量)」の数値だけを読み取る（%なし）。
-{"rate": <number or null>}
-""".strip()
-
+    prompt = '画像から「貯水率(利水容量)」の数値だけをJSONで返す。{"rate": <number or null>}'
     response = model.generate_content([prompt, img_file])
-    return extract_text_from_response(response)
+    return response.text or ""
 
 def get_sameura_rate_with_ai():
-    rate = "--"
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return rate
+        return "--"
 
-    attempts = [
-        (4000, "temp_shot.png"),
-        (12000, "temp_shot2.png"),
-    ]
-
-    for idx, (wait_ms, shot_name) in enumerate(attempts, start=1):
+    for wait_ms, shot in [(4000, "shot1.png"), (12000, "shot2.png")]:
         try:
-            take_dam_screenshot(wait_ms, shot_name)
-            text = read_rate_from_image(shot_name, api_key)
-
-            fixed = salvage_json(text)
-            data = json.loads(fixed)
-
-            r = data.get("rate")
-            if r is None:
+            take_dam_screenshot(wait_ms, shot)
+            text = read_rate_from_image(shot, api_key)
+            m = re.search(r"\{.*\}", text)
+            if not m:
                 continue
-
-            rf = float(r)
-            if 0 <= rf <= 100:
-                rate = f"{rf:.2f}"
-                break
-
+            data = json.loads(m.group(0))
+            r = data.get("rate")
+            if r is not None:
+                return f"{float(r):.2f}"
         except Exception:
             continue
 
-    return rate
+    return "--"
 
 # ==============================
-# Background picker（1分ごと）
+# 背景：毎日ランダム固定
 # ==============================
-def pick_background_per_minute(now: datetime) -> str:
+def pick_daily_background(now: datetime) -> str:
     candidates = sorted(Path("images").glob("bg_*.jpg"))
     if not candidates:
         return "background.jpg"
 
-    seed = int(now.strftime("%Y%m%d%H%M"))
+    seed = int(now.strftime("%Y%m%d"))  # ← その日固定
     rng = random.Random(seed)
     return str(rng.choice(candidates))
 
 # ==============================
-# Image composition
+# 画像生成
 # ==============================
 def create_image(rate: str, weather: str):
     jst = timezone(timedelta(hours=9))
     now = datetime.now(jst)
-    date_str = now.strftime("%Y年%m月%d日 %H:%M")
 
-    bg_path = pick_background_per_minute(now)
+    bg_path = pick_daily_background(now)
     img = Image.open(bg_path).convert("RGB")
     draw = ImageDraw.Draw(img)
 
     font = ImageFont.truetype("font.ttf", 60)
-    font_big = ImageFont.truetype("font.ttf", 130)
     font_mid = ImageFont.truetype("font.ttf", 70)
+    font_big = ImageFont.truetype("font.ttf", 130)
 
     style = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
 
-    draw.text((100, 80), date_str, font=font, **style)
+    draw.text((100, 80), now.strftime("%Y年%m月%d日 %H:%M"), font=font, **style)
     draw.text((100, 155), weather, font=font, **style)
     draw.text((100, 300), "早明浦ダム 貯水率", font=font_mid, **style)
     draw.text((120, 380), f"{rate}%", font=font_big, **style)
 
     img.save("result.jpg", quality=95)
-
-    with open("bg_used.txt", "w", encoding="utf-8") as f:
-        f.write(bg_path)
 
 # ==============================
 # main
