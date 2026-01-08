@@ -34,45 +34,27 @@ jobs:
         run: |
           python main.py
 
-          # ==============================
-          # キャッシュ完全回避
-          # index.html の result.jpg?v=YYYYMMDD に日付を埋め込む
-          # ==============================
-          VERSION=$(date -u -d "+9 hours" +"%Y%m%d")
+          # ===== キャッシュ完全回避（index.html内の v= を毎日更新）=====
+          export VERSION=$(date -u -d "+9 hours" +"%Y%m%d")
 
-          # index.html が無い場合は自動生成（初回対策）
-          if [ ! -f index.html ]; then
-            cat > index.html << 'EOF'
-            <!doctype html>
-            <html lang="ja">
-            <head>
-              <meta charset="utf-8" />
-              <meta name="viewport" content="width=device-width,initial-scale=1" />
-              <title>早明浦ダム 貯水率</title>
-              <style>
-                body {
-                  margin: 0;
-                  background: #000;
-                  display: flex;
-                  justify-content: center;
-                  align-items: center;
-                }
-                img {
-                  width: 100%;
-                  max-width: 1080px;
-                  height: auto;
-                }
-              </style>
-            </head>
-            <body>
-              <img src="result.jpg?v=__VERSION__" alt="早明浦ダム 貯水率" />
-            </body>
-            </html>
-EOF
-          fi
+          python - <<'PY'
+          import os, re
+          from pathlib import Path
 
-          # __VERSION__ を今日の日付に置換（毎日URLが変わる→キャッシュ回避）
-          sed -i "s/__VERSION__/${VERSION}/g" index.html
+          version = os.environ["VERSION"]
+          p = Path("index.html")
+          html = p.read_text(encoding="utf-8")
+
+          # result.jpg?v=数字 を 今日の日付に置換
+          html2 = re.sub(r'(result\.jpg\?v=)\d+', r'\g<1>' + version, html)
+
+          # もし v= が無い場合は付ける（保険）
+          if html2 == html and "result.jpg" in html:
+              html2 = html.replace("result.jpg", f"result.jpg?v={version}")
+
+          p.write_text(html2, encoding="utf-8")
+          print("index.html updated to v=", version)
+          PY
 
       - name: Commit and push if changed
         run: |
