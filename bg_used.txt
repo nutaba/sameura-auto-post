@@ -1,1 +1,1 @@
-images/bg_05.jpg
+images/bg_02.jpg
