@@ -2,8 +2,8 @@ name: Update daily image
 
 on:
   schedule:
-    # 毎日 08:00 JST（UTC 23:00）
-    - cron: "0 23 * * *"
+    # テスト用：1時間ごと（毎時00分）
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -31,7 +31,8 @@ jobs:
         run: |
           python main.py
 
-          VERSION=$(date -u -d "+9 hours" +"%Y%m%d")
+          # テスト中は「分まで」入れて、毎回URLが変わるようにする（キャッシュ完全回避）
+          VERSION=$(date -u -d "+9 hours" +"%Y%m%d%H%M")
 
           if grep -q "result.jpg?v=" index.html; then
             sed -i "s/result.jpg?v=[0-9]*/result.jpg?v=${VERSION}/" index.html
@@ -42,7 +43,14 @@ jobs:
       - name: Commit and push
         run: |
           git config user.name "actions-user"
-          git config user.email "actions@github.com"
+          git config user.email "actions-user@users.noreply.github.com"
+
           git add result.jpg index.html || true
-          git diff --cached --quiet || git commit -m "Update daily image"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update daily image"
           git push
