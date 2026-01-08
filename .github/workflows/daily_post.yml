@@ -43,35 +43,35 @@ jobs:
           # index.html が無い場合は自動生成（初回対策）
           if [ ! -f index.html ]; then
             cat > index.html << 'EOF'
-<!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>早明浦ダム 貯水率</title>
-  <style>
-    body {
-      margin: 0;
-      background: #000;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-    img {
-      width: 100%;
-      max-width: 1080px;
-      height: auto;
-    }
-  </style>
-</head>
-<body>
-  <img src="result.jpg?v=__VERSION__" alt="早明浦ダム 貯水率" />
-</body>
-</html>
+            <!doctype html>
+            <html lang="ja">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width,initial-scale=1" />
+              <title>早明浦ダム 貯水率</title>
+              <style>
+                body {
+                  margin: 0;
+                  background: #000;
+                  display: flex;
+                  justify-content: center;
+                  align-items: center;
+                }
+                img {
+                  width: 100%;
+                  max-width: 1080px;
+                  height: auto;
+                }
+              </style>
+            </head>
+            <body>
+              <img src="result.jpg?v=__VERSION__" alt="早明浦ダム 貯水率" />
+            </body>
+            </html>
 EOF
           fi
 
-          # __VERSION__ を今日の日付に置換
+          # __VERSION__ を今日の日付に置換（毎日URLが変わる→キャッシュ回避）
           sed -i "s/__VERSION__/${VERSION}/g" index.html
 
       - name: Commit and push if changed
