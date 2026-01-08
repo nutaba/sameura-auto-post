@@ -2,8 +2,8 @@ name: Update daily image
 
 on:
   schedule:
-    # 毎日 09:30 JST（UTC 00:30）
-    - cron: "40 0 * * *"
+    # 毎日 08:00 JST（UTC 23:00）
+    - cron: "0 23 * * *"
   workflow_dispatch:
 
 permissions:
@@ -14,17 +14,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
 
@@ -34,28 +31,18 @@ jobs:
         run: |
           python main.py
 
-          # ===== キャッシュ完全回避 =====
-          # JST の日付を作る
           VERSION=$(date -u -d "+9 hours" +"%Y%m%d")
 
-          # index.html の ?v= を置き換え（なければ付与）
           if grep -q "result.jpg?v=" index.html; then
             sed -i "s/result.jpg?v=[0-9]*/result.jpg?v=${VERSION}/" index.html
           else
             sed -i "s/result.jpg/result.jpg?v=${VERSION}/" index.html
           fi
 
-      - name: Commit and push if changed
+      - name: Commit and push
         run: |
           git config user.name "actions-user"
           git config user.email "actions@github.com"
-
-          git add result.jpg index.html bg_used.txt ai_raw.txt || true
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update daily image"
+          git add result.jpg index.html || true
+          git diff --cached --quiet || git commit -m "Update daily image"
           git push
