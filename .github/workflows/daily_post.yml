@@ -2,8 +2,8 @@ name: Update daily image
 
 on:
   schedule:
-    # 毎日 09:00 JST（UTC 00:00）
-    - cron: "0 0 * * *"
+    # 毎日 09:30 JST（UTC 00:30）
+    - cron: "30 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -31,16 +31,16 @@ jobs:
       - name: Run script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # Slack/LINEを使っていないなら不要（消してOK）
-          # SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           python main.py
 
-          # ===== キャッシュ完全回避（index.html の v= を日付で更新）=====
-          # JST の YYYYMMDD を作る
+          # ==============================
+          # キャッシュ完全回避
+          # index.html の result.jpg?v=YYYYMMDD に日付を埋め込む
+          # ==============================
           VERSION=$(date -u -d "+9 hours" +"%Y%m%d")
 
-          # index.html が無い場合は自動作成（初回対策）
+          # index.html が無い場合は自動生成（初回対策）
           if [ ! -f index.html ]; then
             cat > index.html << 'EOF'
 <!doctype html>
@@ -50,8 +50,18 @@ jobs:
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>早明浦ダム 貯水率</title>
   <style>
-    body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; }
-    img { width: 100%; max-width: 1080px; height: auto; }
+    body {
+      margin: 0;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    img {
+      width: 100%;
+      max-width: 1080px;
+      height: auto;
+    }
   </style>
 </head>
 <body>
@@ -71,7 +81,6 @@ EOF
 
           git add result.jpg index.html bg_used.txt ai_raw.txt || true
 
-          # 変更が無ければ終了
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
