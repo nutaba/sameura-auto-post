@@ -1,36 +1,90 @@
-import os, json
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+name: Update daily image
 
-FILE_NAME = "result.jpg"
+on:
+  schedule:
+    # 毎日 09:30 JST（UTC 00:30）
+    - cron: "30 0 * * *"
+  workflow_dispatch:
 
-def main():
-    sa_json = os.environ["GDRIVE_SA_JSON"]
-    folder_id = os.environ["GDRIVE_FOLDER_ID"]
+permissions:
+  contents: write
 
-    info = json.loads(sa_json)
-    creds = service_account.Credentials.from_service_account_info(
-        info,
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
-    drive = build("drive", "v3", credentials=creds)
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-    # 同名があれば update（上書き）、なければ create
-    q = f"name='{FILE_NAME}' and '{folder_id}' in parents and trashed=false"
-    res = drive.files().list(q=q, fields="files(id,name)").execute()
-    files = res.get("files", [])
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    media = MediaFileUpload(FILE_NAME, mimetype="image/jpeg", resumable=True)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    if files:
-        file_id = files[0]["id"]
-        drive.files().update(fileId=file_id, media_body=media).execute()
-        print("Updated:", file_id)
-    else:
-        meta = {"name": FILE_NAME, "parents": [folder_id]}
-        created = drive.files().create(body=meta, media_body=media, fields="id").execute()
-        print("Created:", created["id"])
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
 
-if __name__ == "__main__":
-    main()
+      - name: Run script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python main.py
+
+          # ==============================
+          # キャッシュ完全回避
+          # index.html の result.jpg?v=YYYYMMDD に日付を埋め込む
+          # ==============================
+          VERSION=$(date -u -d "+9 hours" +"%Y%m%d")
+
+          # index.html が無い場合は自動生成（初回対策）
+          if [ ! -f index.html ]; then
+            cat > index.html << 'EOF'
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>早明浦ダム 貯水率</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    img {
+      width: 100%;
+      max-width: 1080px;
+      height: auto;
+    }
+  </style>
+</head>
+<body>
+  <img src="result.jpg?v=__VERSION__" alt="早明浦ダム 貯水率" />
+</body>
+</html>
+EOF
+          fi
+
+          # __VERSION__ を今日の日付に置換
+          sed -i "s/__VERSION__/${VERSION}/g" index.html
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "actions-user"
+          git config user.email "actions@github.com"
+
+          git add result.jpg index.html bg_used.txt ai_raw.txt || true
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update daily image"
+          git push
