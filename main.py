@@ -120,11 +120,11 @@ def get_sameura_rate_with_ai():
 # 背景：毎日ランダム固定
 # ==============================
 def pick_daily_background(now: datetime) -> str:
-    candidates = sorted(Path("images").glob("bg_*.jpg"))
+    candidates = sorted(Path("images").glob("IMG_*.jpeg"))
     if not candidates:
         return "background.jpg"
 
-    seed = int(now.strftime("%Y%m%d"))  # ← その日固定
+    seed = int(now.strftime("%Y%m%d"))
     rng = random.Random(seed)
     return str(rng.choice(candidates))
 
