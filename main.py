@@ -135,20 +135,42 @@ def create_image(rate: str, weather: str):
     jst = timezone(timedelta(hours=9))
     now = datetime.now(jst)
 
+    OUT_W, OUT_H = 1280, 720  # ← ここで横長を指定
+
     bg_path = pick_daily_background(now)
     img = Image.open(bg_path).convert("RGB")
+
+    # 背景を横長に「トリミングして」フィット（歪ませない）
+    src_w, src_h = img.size
+    src_ratio = src_w / src_h
+    out_ratio = OUT_W / OUT_H
+
+    if src_ratio > out_ratio:
+        # 横に長すぎ → 左右を切る
+        new_w = int(src_h * out_ratio)
+        left = (src_w - new_w) // 2
+        img = img.crop((left, 0, left + new_w, src_h))
+    else:
+        # 縦に長すぎ → 上下を切る
+        new_h = int(src_w / out_ratio)
+        top = (src_h - new_h) // 2
+        img = img.crop((0, top, src_w, top + new_h))
+
+    img = img.resize((OUT_W, OUT_H), Image.LANCZOS)
+
     draw = ImageDraw.Draw(img)
 
-    font = ImageFont.truetype("font.ttf", 60)
-    font_mid = ImageFont.truetype("font.ttf", 70)
-    font_big = ImageFont.truetype("font.ttf", 130)
+    font = ImageFont.truetype("font.ttf", 44)
+    font_mid = ImageFont.truetype("font.ttf", 54)
+    font_big = ImageFont.truetype("font.ttf", 110)
 
-    style = {"fill": "white", "stroke_width": 10, "stroke_fill": "black"}
+    style = {"fill": "white", "stroke_width": 8, "stroke_fill": "black"}
 
-    draw.text((100, 80), now.strftime("%Y年%m月%d日 %H:%M"), font=font, **style)
-    draw.text((100, 155), weather, font=font, **style)
-    draw.text((100, 300), "早明浦ダム 貯水率", font=font_mid, **style)
-    draw.text((120, 380), f"{rate}%", font=font_big, **style)
+    # 文字位置も横長用に少し上寄せ
+    draw.text((80, 60),  now.strftime("%Y年%m月%d日 %H:%M"), font=font, **style)
+    draw.text((80, 120), weather, font=font, **style)
+    draw.text((80, 240), "早明浦ダム 貯水率", font=font_mid, **style)
+    draw.text((90, 320), f"{rate}%", font=font_big, **style)
 
     img.save("result.jpg", quality=95)
 
